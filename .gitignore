@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+src-tauri/target/
+
+tools/__pycache__/
+*.pyc
+
+sample/out/
+
+models/*.ckpt
+
+.DS_Store
+Thumbs.db

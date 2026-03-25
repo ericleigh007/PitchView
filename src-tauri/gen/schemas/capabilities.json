@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Allow the main window to access core APIs and open the native media picker.","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
