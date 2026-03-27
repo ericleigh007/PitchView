@@ -14,6 +14,22 @@ $vibratoRateHz = 5.5
 $vibratoDepthSemitones = 0.6
 $runNoteDurationSec = 0.28
 $runGapSec = 0.0
+$tempoTestBpm = 144.0
+$tempoQuarterSec = 60.0 / $tempoTestBpm
+$tempoHalfSec = $tempoQuarterSec * 2.0
+$tempoSixteenthSec = $tempoQuarterSec / 4.0
+$tempoThirtySecondSec = $tempoQuarterSec / 8.0
+$glissandoAmplitude = 0.6
+$glissandoCases = @(
+  @{ FileName = 'synthetic_glissando_C4_F4_1s.wav'; StartHz = 261.625565; EndHz = 349.228231; DurationSec = 1.0 },
+  @{ FileName = 'synthetic_glissando_C4_F4_2s.wav'; StartHz = 261.625565; EndHz = 349.228231; DurationSec = 2.0 },
+  @{ FileName = 'synthetic_glissando_C4_G4_1s.wav'; StartHz = 261.625565; EndHz = 391.995436; DurationSec = 1.0 },
+  @{ FileName = 'synthetic_glissando_C4_G4_2s.wav'; StartHz = 261.625565; EndHz = 391.995436; DurationSec = 2.0 },
+  @{ FileName = 'synthetic_glissando_C4_C5_100ms.wav'; StartHz = 261.625565; EndHz = 523.251131; DurationSec = 0.1 },
+  @{ FileName = 'synthetic_glissando_C4_C5_50ms.wav'; StartHz = 261.625565; EndHz = 523.251131; DurationSec = 0.05 },
+  @{ FileName = 'synthetic_glissando_C5_C4_100ms.wav'; StartHz = 523.251131; EndHz = 261.625565; DurationSec = 0.1 },
+  @{ FileName = 'synthetic_glissando_C5_C4_50ms.wav'; StartHz = 523.251131; EndHz = 261.625565; DurationSec = 0.05 }
+)
 
 $noteFrequencies = @{
   'C4' = 261.625565
@@ -72,6 +88,118 @@ function Add-VibratoNote {
     $value = $Amplitude * [Math]::Sin(2 * [Math]::PI * $instantaneousFrequencyHz * $timeSec)
     [void]$Samples.Add($value)
   }
+}
+
+function Add-LinearGlissando {
+  param(
+    [System.Collections.Generic.List[double]]$Samples,
+    [double]$StartFrequencyHz,
+    [double]$EndFrequencyHz,
+    [double]$Amplitude,
+    [double]$DurationSec
+  )
+
+  $sampleCount = [int][Math]::Round($DurationSec * $sampleRate)
+  if ($sampleCount -le 0) {
+    return
+  }
+
+  $sweepRateHzPerSec = ($EndFrequencyHz - $StartFrequencyHz) / $DurationSec
+  for ($index = 0; $index -lt $sampleCount; $index += 1) {
+    $timeSec = $index / $sampleRate
+    $phase = 2 * [Math]::PI * ($StartFrequencyHz * $timeSec + 0.5 * $sweepRateHzPerSec * $timeSec * $timeSec)
+    $value = $Amplitude * [Math]::Sin($phase)
+    [void]$Samples.Add($value)
+  }
+}
+
+function Add-HarmonicTone {
+  param(
+    [System.Collections.Generic.List[double]]$Samples,
+    [double]$FundamentalHz,
+    [double[]]$HarmonicAmplitudes,
+    [double]$DurationSec
+  )
+
+  $sampleCount = [int][Math]::Round($DurationSec * $sampleRate)
+  for ($index = 0; $index -lt $sampleCount; $index += 1) {
+    $timeSec = $index / $sampleRate
+    $value = 0.0
+    for ($harmonicIndex = 0; $harmonicIndex -lt $HarmonicAmplitudes.Length; $harmonicIndex += 1) {
+      $partialAmplitude = $HarmonicAmplitudes[$harmonicIndex]
+      if ($partialAmplitude -le 0) {
+        continue
+      }
+
+      $harmonicNumber = $harmonicIndex + 1
+      $value += $partialAmplitude * [Math]::Sin(2 * [Math]::PI * $FundamentalHz * $harmonicNumber * $timeSec)
+    }
+
+    [void]$Samples.Add([Math]::Max(-1.0, [Math]::Min(1.0, $value)))
+  }
+}
+
+function Add-FrequencySequence {
+  param(
+    [System.Collections.Generic.List[double]]$Samples,
+    [double[]]$Frequencies,
+    [double]$Amplitude,
+    [double]$TotalDurationSec
+  )
+
+  if ($Frequencies.Length -eq 0 -or $TotalDurationSec -le 0) {
+    return
+  }
+
+  $durationPerStepSec = $TotalDurationSec / $Frequencies.Length
+  foreach ($frequencyHz in $Frequencies) {
+    Add-SineNote -Samples $Samples -FrequencyHz $frequencyHz -Amplitude $Amplitude -DurationSec $durationPerStepSec
+  }
+}
+
+function Add-PhaseContinuousFrequencySequence {
+  param(
+    [System.Collections.Generic.List[double]]$Samples,
+    [double[]]$Frequencies,
+    [double]$Amplitude,
+    [double]$TotalDurationSec,
+    [ref]$PhaseRadians
+  )
+
+  if ($Frequencies.Length -eq 0 -or $TotalDurationSec -le 0) {
+    return
+  }
+
+  $durationPerStepSec = $TotalDurationSec / $Frequencies.Length
+  if ($null -eq $PhaseRadians.Value) {
+    $PhaseRadians.Value = 0.0
+  }
+
+  foreach ($frequencyHz in $Frequencies) {
+    $sampleCount = [int][Math]::Round($durationPerStepSec * $sampleRate)
+    for ($sampleIndex = 0; $sampleIndex -lt $sampleCount; $sampleIndex += 1) {
+      [void]$Samples.Add($Amplitude * [Math]::Sin($PhaseRadians.Value))
+      $PhaseRadians.Value += 2 * [Math]::PI * $frequencyHz / $sampleRate
+      if ($PhaseRadians.Value -gt 2 * [Math]::PI) {
+        $PhaseRadians.Value = $PhaseRadians.Value % (2 * [Math]::PI)
+      }
+    }
+  }
+}
+
+function New-ChromaticFrequencies {
+  param(
+    [int]$StartMidi,
+    [int]$EndMidi
+  )
+
+  $frequencies = New-Object System.Collections.Generic.List[double]
+  for ($midi = $StartMidi; $midi -le $EndMidi; $midi += 1) {
+    $frequencyHz = 440.0 * [Math]::Pow(2.0, ($midi - 69) / 12.0)
+    [void]$frequencies.Add($frequencyHz)
+  }
+
+  return $frequencies.ToArray()
 }
 
 function Write-WavFile {
@@ -175,6 +303,12 @@ foreach ($amplitude in @(0.8, 0.3, 0.1)) {
 }
 Write-GeneratedFile -FileName 'synthetic_vibrato_A4.wav' -Samples $vibratoBench
 
+foreach ($glissandoCase in $glissandoCases) {
+  $glissandoBench = New-SampleBuffer
+  Add-LinearGlissando -Samples $glissandoBench -StartFrequencyHz $glissandoCase.StartHz -EndFrequencyHz $glissandoCase.EndHz -Amplitude $glissandoAmplitude -DurationSec $glissandoCase.DurationSec
+  Write-GeneratedFile -FileName $glissandoCase.FileName -Samples $glissandoBench
+}
+
 $majorScale = @('C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5', 'B4', 'A4', 'G4', 'F4', 'E4', 'D4', 'C4')
 $majorScaleBench = New-SampleBuffer
 foreach ($noteName in $majorScale) {
@@ -195,3 +329,45 @@ for ($index = $chromaticFrequencies.Count - 2; $index -ge 0; $index -= 1) {
   Add-SilenceSamples -Samples $chromaticBench -DurationSec $runGapSec
 }
 Write-GeneratedFile -FileName 'synthetic_chromatic_run_C4_C5.wav' -Samples $chromaticBench
+
+$fastRunCases = @(
+  @{ FileName = 'synthetic_fast_run_C4_C5_100ms.wav'; Frequencies = $chromaticFrequencies; TotalDurationSec = 0.1 },
+  @{ FileName = 'synthetic_fast_run_C4_C5_50ms.wav'; Frequencies = $chromaticFrequencies; TotalDurationSec = 0.05 },
+  @{ FileName = 'synthetic_fast_run_C5_C4_100ms.wav'; Frequencies = @($chromaticFrequencies[($chromaticFrequencies.Count - 1)..0]); TotalDurationSec = 0.1 },
+  @{ FileName = 'synthetic_fast_run_C5_C4_50ms.wav'; Frequencies = @($chromaticFrequencies[($chromaticFrequencies.Count - 1)..0]); TotalDurationSec = 0.05 }
+)
+
+foreach ($fastRunCase in $fastRunCases) {
+  $fastRunBench = New-SampleBuffer
+  $fastRunPhase = 0.0
+  Add-PhaseContinuousFrequencySequence -Samples $fastRunBench -Frequencies $fastRunCase.Frequencies -Amplitude 0.6 -TotalDurationSec $fastRunCase.TotalDurationSec -PhaseRadians ([ref]$fastRunPhase)
+  Write-GeneratedFile -FileName $fastRunCase.FileName -Samples $fastRunBench
+}
+
+$structuredTempoRunBench = New-SampleBuffer
+$structuredTempoRunPhase = 0.0
+Add-PhaseContinuousFrequencySequence -Samples $structuredTempoRunBench -Frequencies @($noteFrequencies['C4']) -Amplitude 0.6 -TotalDurationSec $tempoHalfSec -PhaseRadians ([ref]$structuredTempoRunPhase)
+Add-PhaseContinuousFrequencySequence -Samples $structuredTempoRunBench -Frequencies $chromaticFrequencies -Amplitude 0.6 -TotalDurationSec ($tempoSixteenthSec * $chromaticFrequencies.Count) -PhaseRadians ([ref]$structuredTempoRunPhase)
+Add-PhaseContinuousFrequencySequence -Samples $structuredTempoRunBench -Frequencies @($noteFrequencies['C5']) -Amplitude 0.6 -TotalDurationSec $tempoHalfSec -PhaseRadians ([ref]$structuredTempoRunPhase)
+Write-GeneratedFile -FileName 'synthetic_tempo_run_144bpm_16ths_C4_C5.wav' -Samples $structuredTempoRunBench
+
+$a1ToA5ChromaticFrequencies = New-ChromaticFrequencies -StartMidi 33 -EndMidi 81
+$a5ToA1ChromaticFrequencies = @($a1ToA5ChromaticFrequencies[($a1ToA5ChromaticFrequencies.Count - 2)..0])
+$structuredThirtySecondRun = New-SampleBuffer
+$structuredThirtySecondPhase = 0.0
+Add-PhaseContinuousFrequencySequence -Samples $structuredThirtySecondRun -Frequencies @(55.0) -Amplitude 0.6 -TotalDurationSec $tempoHalfSec -PhaseRadians ([ref]$structuredThirtySecondPhase)
+Add-PhaseContinuousFrequencySequence -Samples $structuredThirtySecondRun -Frequencies @($a1ToA5ChromaticFrequencies + $a5ToA1ChromaticFrequencies + $a1ToA5ChromaticFrequencies + $a5ToA1ChromaticFrequencies) -Amplitude 0.6 -TotalDurationSec ($tempoThirtySecondSec * (($a1ToA5ChromaticFrequencies.Count + $a5ToA1ChromaticFrequencies.Count) * 2)) -PhaseRadians ([ref]$structuredThirtySecondPhase)
+Add-PhaseContinuousFrequencySequence -Samples $structuredThirtySecondRun -Frequencies @(55.0) -Amplitude 0.6 -TotalDurationSec $tempoHalfSec -PhaseRadians ([ref]$structuredThirtySecondPhase)
+Write-GeneratedFile -FileName 'synthetic_tempo_run_144bpm_32nds_A1_A5_cycles.wav' -Samples $structuredThirtySecondRun
+
+$harmonicCases = @(
+  @{ FileName = 'synthetic_harmonics_A3_balanced.wav'; FundamentalHz = 220.0; Harmonics = @(0.42, 0.24, 0.16, 0.1); DurationSec = 3.0 },
+  @{ FileName = 'synthetic_harmonics_A3_second_harmonic_dominant.wav'; FundamentalHz = 220.0; Harmonics = @(0.18, 0.52, 0.22, 0.12); DurationSec = 3.0 },
+  @{ FileName = 'synthetic_harmonics_A3_missing_fundamental.wav'; FundamentalHz = 220.0; Harmonics = @(0.0, 0.54, 0.24, 0.14); DurationSec = 3.0 }
+)
+
+foreach ($harmonicCase in $harmonicCases) {
+  $harmonicBench = New-SampleBuffer
+  Add-HarmonicTone -Samples $harmonicBench -FundamentalHz $harmonicCase.FundamentalHz -HarmonicAmplitudes $harmonicCase.Harmonics -DurationSec $harmonicCase.DurationSec
+  Write-GeneratedFile -FileName $harmonicCase.FileName -Samples $harmonicBench
+}

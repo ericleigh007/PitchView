@@ -14,6 +14,8 @@ export type BackendDetectionResult = {
   python: boolean;
   demucs: boolean;
   audio_separator: boolean;
+  librosa: boolean;
+  aubio: boolean;
   onnxruntime: boolean;
   spleeter: boolean;
   openunmix: boolean;
@@ -102,5 +104,20 @@ export const runPreprocessJob = async (args: {
     modelId: args.modelId,
     modelFile: args.modelFile ?? null,
     dryRun: args.dryRun ?? false,
+  });
+};
+
+export const runPitchAnalysisJob = async (args: {
+  source: string;
+  detectorId?: string;
+}) => {
+  const core = await getTauriCore();
+  if (!core) {
+    throw new Error('Desktop pitch analysis is only available in the Tauri app.');
+  }
+
+  return core.invoke<WorkerResult>('run_pitch_analysis', {
+    source: args.source,
+    detectorId: args.detectorId ?? 'librosa-pyin',
   });
 };

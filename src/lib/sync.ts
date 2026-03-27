@@ -146,7 +146,13 @@ export const appReducer = (state: AppState, action: TransportAction): AppState =
             videoCodec: action.videoCodec,
             supportsTransparency: false,
             availableStems: [
-              { id: 'original', label: 'Original mix', status: 'source', sourceUrl: action.mediaSourceUrl },
+              {
+                id: 'original',
+                label: 'Original mix',
+                status: 'source',
+                sourceUrl: action.mediaSourceUrl,
+                sourcePath: action.mediaSourcePath ?? null,
+              },
               { id: 'vocals', label: 'Separated vocals', status: 'planned' },
               { id: 'other', label: 'Other stem', status: 'planned' },
             ],
@@ -174,6 +180,7 @@ export const appReducer = (state: AppState, action: TransportAction): AppState =
             label: 'Original mix',
             status: 'source' as const,
             sourceUrl: player.mediaSourceUrl,
+            sourcePath: player.mediaSourcePath,
           };
 
           const nextAvailableStems = [originalStem, ...action.stems.filter((stem) => stem.id !== 'original')];

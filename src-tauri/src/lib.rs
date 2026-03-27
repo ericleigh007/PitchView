@@ -166,6 +166,24 @@ fn run_preprocess_job(
 }
 
 #[tauri::command]
+fn run_pitch_analysis(source: String, detector_id: Option<String>) -> Result<Value, String> {
+    let mut args = vec![
+        "analyze-pitch".to_string(),
+        "--source".to_string(),
+        source,
+    ];
+
+    if let Some(detector_id) = detector_id {
+        if !detector_id.is_empty() {
+            args.push("--detector-id".to_string());
+            args.push(detector_id);
+        }
+    }
+
+    run_preprocess_worker(&args)
+}
+
+#[tauri::command]
 fn get_backend_capabilities() -> BackendCapabilities {
     BackendCapabilities {
         import_pipeline: false,
@@ -303,6 +321,7 @@ pub fn run() {
             get_backend_capabilities,
             get_tool_status,
             detect_preprocess_backends,
+            run_pitch_analysis,
             describe_preprocess_worker,
             describe_supported_media,
             describe_preprocess_pipeline,

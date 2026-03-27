@@ -7,6 +7,7 @@ export type StemTrack = {
   label: string;
   status: 'source' | 'planned' | 'generated';
   sourceUrl?: string;
+  sourcePath?: string | null;
 };
 
 export type PitchPoint = {

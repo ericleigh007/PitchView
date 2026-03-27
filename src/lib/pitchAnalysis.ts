@@ -1,9 +1,13 @@
 import { YIN } from 'pitchfinder';
+import { analyzePitchDiagnostics } from './pitchDiagnostics';
+import { smoothPitchTrack } from './pitchTrackSmoothing';
+import { runPitchAnalysisJob } from './tauriPreprocess';
+import type { WorkerResult } from './tauriPreprocess';
 import type { PitchPoint } from './types';
 
-const CACHE_PREFIX = 'pitch-analysis:v4:';
-const FRAME_SIZE = 2048;
-const HOP_SIZE = 512;
+const CACHE_PREFIX = 'pitch-analysis:v7:';
+const FRAME_SIZE = 1536;
+const HOP_SIZE = 256;
 const SILENCE_RMS_THRESHOLD = 0.006;
 const MIN_VOCAL_CONFIDENCE = 0.14;
 const MAX_FREQUENCY_HZ = 1600;
@@ -12,7 +16,7 @@ const TARGET_FRAME_RMS = 0.18;
 const MAX_FRAME_GAIN = 12;
 const VOCAL_BANDPASS_LOW_HZ = 80;
 const VOCAL_BANDPASS_HIGH_HZ = 1000;
-const VOCAL_BANDPASS_TAPS = 101;
+const VOCAL_BANDPASS_TAPS = 81;
 
 const frequencyToMidi = (frequency: number) => 69 + 12 * Math.log2(frequency / 440);
 
@@ -175,6 +179,88 @@ const setCachedPitchPoints = (mediaSourceUrl: string, pitchPoints: PitchPoint[])
   }
 };
 
+export type PitchTrackQuality = {
+  score: number;
+  voicedRatio: number;
+  continuityRatio: number;
+  averageVoicedConfidence: number;
+  voicedPointCount: number;
+  spikeCount: number;
+  shortGapCount: number;
+  octaveIslandCount: number;
+};
+
+const getVoicedRunFrameCount = (pitchPoints: PitchPoint[]) => {
+  let currentRunLength = 0;
+  let sustainedVoicedFrames = 0;
+
+  for (const point of pitchPoints) {
+    if (point.midi !== null) {
+      currentRunLength += 1;
+      continue;
+    }
+
+    if (currentRunLength >= 3) {
+      sustainedVoicedFrames += currentRunLength;
+    }
+
+    currentRunLength = 0;
+  }
+
+  if (currentRunLength >= 3) {
+    sustainedVoicedFrames += currentRunLength;
+  }
+
+  return sustainedVoicedFrames;
+};
+
+export const evaluatePitchTrackQuality = (pitchPoints: PitchPoint[]): PitchTrackQuality => {
+  if (pitchPoints.length === 0) {
+    return {
+      score: 0,
+      voicedRatio: 0,
+      continuityRatio: 0,
+      averageVoicedConfidence: 0,
+      voicedPointCount: 0,
+      spikeCount: 0,
+      shortGapCount: 0,
+      octaveIslandCount: 0,
+    };
+  }
+
+  const voicedPoints = pitchPoints.filter((point) => point.midi !== null);
+  const voicedPointCount = voicedPoints.length;
+  const voicedRatio = voicedPointCount / pitchPoints.length;
+  const averageVoicedConfidence =
+    voicedPointCount === 0 ? 0 : voicedPoints.reduce((sum, point) => sum + point.confidence, 0) / voicedPointCount;
+  const continuityRatio = voicedPointCount === 0 ? 0 : getVoicedRunFrameCount(pitchPoints) / voicedPointCount;
+  const diagnostics = analyzePitchDiagnostics(pitchPoints);
+  const score = Math.max(
+    0,
+    Number(
+      (
+        voicedRatio * 100 +
+        continuityRatio * 55 +
+        averageVoicedConfidence * 30 -
+        diagnostics.spikeCount * 0.08 -
+        diagnostics.shortGapCount * 0.18 -
+        diagnostics.octaveIslandCount * 1.5
+      ).toFixed(2),
+    ),
+  );
+
+  return {
+    score,
+    voicedRatio,
+    continuityRatio,
+    averageVoicedConfidence,
+    voicedPointCount,
+    spikeCount: diagnostics.spikeCount,
+    shortGapCount: diagnostics.shortGapCount,
+    octaveIslandCount: diagnostics.octaveIslandCount,
+  };
+};
+
 export function analyzePitchSamples(channelData: Float32Array, sampleRate: number): PitchPoint[] {
   const filteredChannelData = prefilterForVocals(channelData, sampleRate);
   const detector = YIN({ sampleRate, threshold: 0.1, probabilityThreshold: 0.05 });
@@ -190,7 +276,7 @@ export function analyzePitchSamples(channelData: Float32Array, sampleRate: numbe
     }
 
     const rms = Math.sqrt(energy / frame.length);
-    const timeSec = offset / sampleRate;
+    const timeSec = (offset + FRAME_SIZE / 2) / sampleRate;
 
     if (rms < SILENCE_RMS_THRESHOLD) {
       pitchPoints.push({ timeSec, midi: null, confidence: 0 });
@@ -208,13 +294,49 @@ export function analyzePitchSamples(channelData: Float32Array, sampleRate: numbe
     pitchPoints.push({ timeSec, midi, confidence: normalizedConfidence });
   }
 
-  return pitchPoints;
+  return smoothPitchTrack(pitchPoints);
 }
 
-export async function analyzePitchFromMediaSource(mediaSourceUrl: string): Promise<PitchPoint[]> {
+const parsePitchAnalysisResult = (result: WorkerResult & { pitchPoints?: unknown }) => {
+  if (!Array.isArray(result.pitchPoints)) {
+    throw new Error('Pitch analysis worker returned no pitch points.');
+  }
+
+  return result.pitchPoints.flatMap((point) => {
+    if (!point || typeof point !== 'object') {
+      return [];
+    }
+
+    const candidate = point as Partial<PitchPoint>;
+    if (typeof candidate.timeSec !== 'number' || typeof candidate.confidence !== 'number') {
+      return [];
+    }
+
+    return [
+      {
+        timeSec: candidate.timeSec,
+        midi: typeof candidate.midi === 'number' ? candidate.midi : null,
+        confidence: candidate.confidence,
+      },
+    ];
+  });
+};
+
+export async function analyzePitchFromMediaSource(mediaSourceUrl: string, nativeSourcePath?: string | null): Promise<PitchPoint[]> {
   const cached = getCachedPitchPoints(mediaSourceUrl);
   if (cached) {
     return cached;
+  }
+
+  if (nativeSourcePath) {
+    try {
+      const backendResult = await runPitchAnalysisJob({ source: nativeSourcePath, detectorId: 'librosa-pyin' });
+      const pitchPoints = smoothPitchTrack(parsePitchAnalysisResult(backendResult));
+      setCachedPitchPoints(mediaSourceUrl, pitchPoints);
+      return pitchPoints;
+    } catch {
+      // Fall back to browser-side analysis when the desktop worker or detector is unavailable.
+    }
   }
 
   const response = await fetch(mediaSourceUrl);

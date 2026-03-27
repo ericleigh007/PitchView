@@ -10,6 +10,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy
+
+
+PITCH_ANALYSIS_FILTER_CHAIN = ",".join(
+    [
+        "highpass=f=70",
+        "lowpass=f=1200",
+        "volume=8.0",
+        "acompressor=threshold=0.055:ratio=10:attack=0.8:release=24:makeup=5.0:knee=1.5",
+        "acompressor=threshold=0.018:ratio=16:attack=0.15:release=7:makeup=4.0:knee=1.0",
+        "acompressor=threshold=0.008:ratio=20:attack=0.08:release=4:makeup=2.0:knee=1.0",
+        "asoftclip=type=tanh:param=0.96",
+        "alimiter=limit=0.985:attack=1:release=12",
+    ]
+)
+
 
 def build_audio_separator_command(
     source: Path | None,
@@ -300,6 +316,8 @@ def detect_backends() -> dict[str, bool]:
         "python": True,
         "demucs": is_module_available("demucs"),
         "audio_separator": is_module_available("audio_separator"),
+        "librosa": is_module_available("librosa"),
+        "aubio": is_module_available("aubio"),
         "onnxruntime": is_module_available("onnxruntime"),
         "spleeter": is_module_available("spleeter"),
         "openunmix": is_module_available("openunmix"),
@@ -311,7 +329,151 @@ def detect_backends() -> dict[str, bool]:
     }
 
 
-def normalize_audio(source: Path, output_path: Path) -> dict:
+def frequency_to_midi(frequency_hz: float) -> float:
+    return 69 + 12 * numpy.log2(frequency_hz / 440.0)
+
+
+def prepare_audio_analysis_input(source: Path, working_dir: Path) -> tuple[Path, dict]:
+    normalized_path = working_dir / f"{source.stem}_analysis.wav"
+    normalize_result = normalize_audio(source, normalized_path, audio_filter=PITCH_ANALYSIS_FILTER_CHAIN)
+    if normalize_result["result"] != "completed":
+        raise SystemExit(str(normalize_result.get("stderr") or "Audio extraction failed").strip())
+
+    return normalized_path, normalize_result
+
+
+def analyze_pitch_with_aubio(source: Path, detector_id: str) -> dict:
+    if not is_module_available("aubio"):
+        raise SystemExit("aubio is not installed")
+
+    import aubio
+    import soundfile
+
+    samples, sample_rate = soundfile.read(str(source), always_2d=False)
+    if isinstance(samples, numpy.ndarray) and samples.ndim > 1:
+        samples = numpy.mean(samples, axis=1)
+
+    samples = numpy.asarray(samples, dtype=numpy.float32)
+    frame_length = 2048
+    hop_length = 256
+    aubio_method = detector_id.removeprefix("aubio-") or "yinfft"
+    detector = aubio.pitch(aubio_method, frame_length, hop_length, sample_rate)
+    detector.set_unit("Hz")
+    detector.set_tolerance(0.8)
+    silence_db = -60
+    detector.set_silence(silence_db)
+
+    pitch_points = []
+    for start in range(0, len(samples), hop_length):
+      frame = samples[start : start + hop_length]
+      if len(frame) < hop_length:
+          frame = numpy.pad(frame, (0, hop_length - len(frame)))
+
+      frequency_hz = float(detector(frame)[0])
+      confidence = float(detector.get_confidence())
+      time_sec = (start + frame_length / 2) / sample_rate
+      midi = None
+      if frequency_hz > 0 and confidence > 0:
+          midi = float(frequency_to_midi(frequency_hz))
+
+      pitch_points.append(
+          {
+              "timeSec": float(time_sec),
+              "midi": midi,
+              "confidence": confidence,
+          }
+      )
+
+    return {
+        "source": str(source),
+        "detectorId": detector_id,
+        "sampleRate": int(sample_rate),
+        "frameLength": frame_length,
+        "hopLength": hop_length,
+        "result": "completed",
+        "pitchPoints": pitch_points,
+    }
+
+
+def analyze_pitch(source: Path, detector_id: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="pitchview-analysis-") as temp_dir:
+        prepared_source, normalize_result = prepare_audio_analysis_input(source, Path(temp_dir))
+
+        if detector_id.startswith("aubio-"):
+            result = analyze_pitch_with_aubio(prepared_source, detector_id)
+        else:
+            if detector_id != "librosa-pyin":
+                raise SystemExit(f"Unsupported pitch detector: {detector_id}")
+
+            if not is_module_available("librosa"):
+                raise SystemExit("librosa is not installed")
+
+            import librosa
+
+            samples, sample_rate = librosa.load(prepared_source, sr=None, mono=True)
+            frame_length = 2048
+            hop_length = 256
+            fmin = librosa.note_to_hz("C2")
+            fmax = librosa.note_to_hz("C7")
+            frequencies_hz, voiced_flags, voiced_probabilities = librosa.pyin(
+                samples,
+                fmin=fmin,
+                fmax=fmax,
+                sr=sample_rate,
+                frame_length=frame_length,
+                hop_length=hop_length,
+                resolution=0.1,
+                max_transition_rate=24.0,
+                switch_prob=0.008,
+                no_trough_prob=0.01,
+                fill_na=numpy.nan,
+                center=True,
+            )
+            frame_times = librosa.frames_to_time(
+                numpy.arange(len(frequencies_hz)),
+                sr=sample_rate,
+                hop_length=hop_length,
+                n_fft=frame_length,
+            )
+
+            pitch_points = []
+            for time_sec, frequency_hz, voiced_flag, voiced_probability in zip(
+                frame_times,
+                frequencies_hz,
+                voiced_flags,
+                voiced_probabilities,
+                strict=False,
+            ):
+                midi = None
+                confidence = float(voiced_probability or 0)
+                if bool(voiced_flag) and frequency_hz is not None and numpy.isfinite(frequency_hz):
+                    midi = float(frequency_to_midi(float(frequency_hz)))
+
+                pitch_points.append(
+                    {
+                        "timeSec": float(time_sec),
+                        "midi": midi,
+                        "confidence": confidence,
+                    }
+                )
+
+            result = {
+                "source": str(prepared_source),
+                "detectorId": detector_id,
+                "sampleRate": int(sample_rate),
+                "frameLength": frame_length,
+                "hopLength": hop_length,
+                "result": "completed",
+                "pitchPoints": pitch_points,
+            }
+
+        result["requestedSource"] = str(source)
+        result["normalizedSource"] = normalize_result["output"]
+        result["normalizeResult"] = normalize_result["result"]
+        return result
+
+
+def normalize_audio(source: Path, output_path: Path, audio_filter: str | None = None) -> dict:
     ffmpeg_executable, ffmpeg_source = resolve_ffmpeg_executable()
     if not ffmpeg_executable:
         raise SystemExit("FFmpeg is not available on PATH and imageio-ffmpeg is not installed")
@@ -327,10 +489,16 @@ def normalize_audio(source: Path, output_path: Path) -> dict:
         "1",
         "-ar",
         "44100",
+    ]
+
+    if audio_filter:
+        command.extend(["-af", audio_filter])
+
+    command.extend([
         "-c:a",
         "pcm_s16le",
         str(output_path),
-    ]
+    ])
     completed = subprocess.run(command, capture_output=True, text=True)
     return {
         "source": str(source),
@@ -523,6 +691,11 @@ def main() -> None:
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.set_defaults(action="run")
 
+    analyze_pitch_parser = subparsers.add_parser("analyze-pitch", help="Run pitch analysis on a source file")
+    analyze_pitch_parser.add_argument("--source", required=True)
+    analyze_pitch_parser.add_argument("--detector-id", default="librosa-pyin")
+    analyze_pitch_parser.set_defaults(action="analyze-pitch")
+
     args = parser.parse_args()
 
     if args.action == "detect":
@@ -535,6 +708,10 @@ def main() -> None:
 
     if args.action == "download-model":
         print(json.dumps(download_model(args.model_id, args.model_file), indent=2))
+        return
+
+    if args.action == "analyze-pitch":
+        print(json.dumps(analyze_pitch(Path(args.source), args.detector_id)))
         return
 
     source = Path(args.source)

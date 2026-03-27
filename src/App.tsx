@@ -2,7 +2,9 @@ import { useEffect, useRef, useReducer, useState } from 'react';
 import { PitchGraph } from './components/PitchGraph';
 import { TransportPanel } from './components/TransportPanel';
 import { initialState } from './lib/data';
+import { analyzePitchDiagnostics } from './lib/pitchDiagnostics';
 import { analyzePitchFromMediaSource } from './lib/pitchAnalysis';
+import { buildVisiblePitchPoints } from './lib/pitchDisplay';
 import { buildPreprocessPlan } from './lib/preprocessPlan';
 import { classifyGeneratedStemFile } from './lib/stemFiles';
 import { defaultStemModelId, stemModelProfiles } from './lib/stemModels';
@@ -73,6 +75,7 @@ const mapOutputFilesToStems = async (outputFiles: string[]): Promise<StemTrack[]
       label,
       status: 'generated',
       sourceUrl: await convertLocalFileToAssetUrl(outputFile),
+      sourcePath: outputFile,
     });
   }
 
@@ -88,6 +91,7 @@ const resolvePitchStem = (player: PlayerState, preferredStemId: string): StemTra
       label: 'Original mix',
       status: 'source',
       sourceUrl: player.mediaSourceUrl,
+      sourcePath: player.mediaSourcePath,
     }
   );
 };
@@ -562,11 +566,12 @@ export default function App() {
   }, [state.players]);
 
   useEffect(() => {
-    const sourceGroups = new Map<string, string[]>();
+    const sourceGroups = new Map<string, { playerIds: string[]; pitchSourcePath: string | null }>();
 
     for (const player of state.players) {
       const pitchStem = resolvePitchStem(player, state.pitchStemPreferenceId);
       const pitchSourceUrl = pitchStem.sourceUrl ?? player.mediaSourceUrl;
+      const pitchSourcePath = pitchStem.sourcePath ?? player.mediaSourcePath;
       if (!pitchSourceUrl) {
         continue;
       }
@@ -578,29 +583,43 @@ export default function App() {
         continue;
       }
 
-      const existing = sourceGroups.get(pitchSourceUrl) ?? [];
-      existing.push(player.id);
+      const existing = sourceGroups.get(pitchSourceUrl) ?? { playerIds: [], pitchSourcePath: null };
+      existing.playerIds.push(player.id);
+      existing.pitchSourcePath ??= pitchSourcePath ?? null;
       sourceGroups.set(pitchSourceUrl, existing);
     }
 
-    for (const [pitchSourceUrl, playerIds] of sourceGroups) {
+    for (const [pitchSourceUrl, request] of sourceGroups) {
       if (analysisRequestsRef.current.has(pitchSourceUrl)) {
         continue;
       }
 
       analysisRequestsRef.current.add(pitchSourceUrl);
-      for (const playerId of playerIds) {
+      for (const playerId of request.playerIds) {
         dispatch({ type: 'set-pitch-status', playerId, pitchStatus: 'loading', pitchSourceUrl });
       }
 
-      void analyzePitchFromMediaSource(pitchSourceUrl)
+      void analyzePitchFromMediaSource(pitchSourceUrl, request.pitchSourcePath)
         .then((pitchPoints) => {
-          for (const playerId of playerIds) {
+          const diagnostics = analyzePitchDiagnostics(pitchPoints);
+          pushDebugLog('info', 'Pitch diagnostics for analyzed source.', {
+            pitchSourceUrl,
+            voicedPoints: diagnostics.voicedPoints,
+            nullPoints: diagnostics.nullPoints,
+            spikeCount: diagnostics.spikeCount,
+            shortGapCount: diagnostics.shortGapCount,
+            octaveIslandCount: diagnostics.octaveIslandCount,
+            spikes: diagnostics.spikes,
+            shortGaps: diagnostics.shortGaps,
+            octaveIslands: diagnostics.octaveIslands,
+          });
+
+          for (const playerId of request.playerIds) {
             dispatch({ type: 'set-pitch-points', playerId, pitchPoints, pitchSourceUrl });
           }
         })
         .catch(() => {
-          for (const playerId of playerIds) {
+          for (const playerId of request.playerIds) {
             dispatch({ type: 'set-pitch-status', playerId, pitchStatus: 'error', pitchSourceUrl });
           }
         })
@@ -756,6 +775,59 @@ export default function App() {
   const handleBrowserImportButtonClick = () => {
     pushDebugLog('info', 'Opening browser file picker.');
     importInputRef.current?.click();
+  };
+
+  const handleLogDisplayedPitchPoints = () => {
+    const focusTimeSec = selectedPlayer.isLocked ? masterPosition : selectedPlayer.positionSec;
+    const rangeStart = Math.max(0, focusTimeSec - state.timeScaleSec / 2);
+    const rangeEnd = rangeStart + state.timeScaleSec;
+    const midiCenter = state.pitchCenterMode === 'adaptive' ? getAdaptiveMidiCenter(selectedPlayer, focusTimeSec, state.timeScaleSec) : 60;
+    const midiMin = midiCenter - state.pitchRangeSemitones / 2;
+    const midiMax = midiCenter + state.pitchRangeSemitones / 2;
+    const rawWindowPoints = selectedPlayer.pitchPoints
+      .filter((point) => point.timeSec >= rangeStart && point.timeSec <= rangeEnd)
+      .map((point) => ({
+        timeSec: Number(point.timeSec.toFixed(3)),
+        midi: point.midi === null ? null : Number(point.midi.toFixed(2)),
+        confidence: Number(point.confidence.toFixed(3)),
+      }));
+    const displayedPoints = buildVisiblePitchPoints(
+      selectedPlayer.pitchPoints,
+      rangeStart,
+      rangeEnd,
+      midiMin,
+      midiMax,
+      0.14,
+    ).map((point) => ({
+      timeSec: Number(point.timeSec.toFixed(3)),
+      midi: Number(point.midi.toFixed(2)),
+      note: point.midi === null ? null : undefined,
+    }));
+    const displayDump = {
+      playerId: selectedPlayer.id,
+      playerName: selectedPlayer.name,
+      focusTimeSec: Number(focusTimeSec.toFixed(3)),
+      rangeStart: Number(rangeStart.toFixed(3)),
+      rangeEnd: Number(rangeEnd.toFixed(3)),
+      pitchRangeSemitones: state.pitchRangeSemitones,
+      midiCenter: Number(midiCenter.toFixed(2)),
+      midiMin: Number(midiMin.toFixed(2)),
+      midiMax: Number(midiMax.toFixed(2)),
+      rawWindowPointCount: rawWindowPoints.length,
+      displayedPointCount: displayedPoints.length,
+      rawWindowPoints,
+      displayedPoints,
+    };
+
+    console.info('[PitchView] Display point dump', displayDump);
+    pushDebugLog('info', 'Logged display point dump to console.', {
+      playerId: selectedPlayer.id,
+      focusTimeSec: displayDump.focusTimeSec,
+      rangeStart: displayDump.rangeStart,
+      rangeEnd: displayDump.rangeEnd,
+      rawWindowPointCount: displayDump.rawWindowPointCount,
+      displayedPointCount: displayDump.displayedPointCount,
+    });
   };
 
   const handlePathImport = async () => {
@@ -1013,6 +1085,7 @@ export default function App() {
           </button>
           <button className="chip" onClick={restartDemo}>Restart Demo</button>
           <button className="chip" onClick={handleBrowserImportButtonClick}>Browse Media</button>
+          <button className="chip" onClick={handleLogDisplayedPitchPoints}>Log Display Points</button>
           <input ref={importInputRef} className="visually-hidden" type="file" accept="audio/*,video/*" onChange={handleImportMediaChange} />
         </div>
         <div className="demo-panel__target-grid">
@@ -1159,6 +1232,7 @@ export default function App() {
               const focusTimeSec = player.isLocked ? masterPosition : player.positionSec;
               const pitchStem = resolvePitchStem(player, state.pitchStemPreferenceId);
               const midiCenter = state.pitchCenterMode === 'adaptive' ? getAdaptiveMidiCenter(player, focusTimeSec, state.timeScaleSec) : 60;
+              const lineOpacity = 0.76 + player.opacity * 0.24;
               return (
                 <div
                   key={player.id}
@@ -1176,14 +1250,15 @@ export default function App() {
                   onPointerUp={(event) => handleLayerPointerUp(event.pointerId)}
                   onPointerCancel={(event) => handleLayerPointerUp(event.pointerId)}
                   style={{
+                    '--layer-media-opacity': String(player.opacity),
+                    '--layer-controls-opacity': String(0.72 + player.opacity * 0.28),
                     zIndex: player.zIndex,
-                    opacity: player.opacity,
                     width: player.width,
                     height: player.height,
                     borderColor: player.lineColor,
                     boxShadow: `0 0 0 1px ${player.lineColor}33, 0 32px 80px ${player.lineColor}25`,
                     transform: `translate(${player.offsetX}px, ${player.offsetY}px)`,
-                  }}
+                  } as React.CSSProperties}
                 >
                   <video
                     ref={(element) => {
@@ -1316,6 +1391,7 @@ export default function App() {
                       pitchRangeSemitones={state.pitchRangeSemitones}
                       midiCenter={midiCenter}
                       emphasis={emphasis}
+                      lineOpacity={lineOpacity}
                     />
                   </div>
                   <div className="video-layer__transport" data-layer-control="true">

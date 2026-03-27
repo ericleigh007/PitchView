@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "preview": "vite preview",
+    "scan:display-glitches": "tsx tools/scan_display_glitches.ts",
+    "benchmark:pitch-detectors": "tsx tools/benchmark_pitch_detectors.ts",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -22,6 +24,8 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.0.0",
+    "node-wav": "^0.0.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2",
     "vite": "^6.2.2",
     "vitest": "^3.2.4"

@@ -28,7 +28,7 @@ describe('appReducer stem state', () => {
 
     expect(lead?.activeStemId).toBe('original');
     expect(lead?.availableStems).toEqual([
-      { id: 'original', label: 'Original mix', status: 'source', sourceUrl: 'asset://imported/video.webm' },
+      { id: 'original', label: 'Original mix', status: 'source', sourceUrl: 'asset://imported/video.webm', sourcePath: 'C:\\media\\video.webm' },
       { id: 'vocals', label: 'Separated vocals', status: 'planned' },
       { id: 'other', label: 'Other stem', status: 'planned' },
     ]);
@@ -56,7 +56,7 @@ describe('appReducer stem state', () => {
 
     expect(lead?.activeStemId).toBe('vocals');
     expect(lead?.availableStems).toEqual([
-      { id: 'original', label: 'Original mix', status: 'source', sourceUrl: 'asset://imported/video.webm' },
+      { id: 'original', label: 'Original mix', status: 'source', sourceUrl: 'asset://imported/video.webm', sourcePath: 'C:\\media\\video.webm' },
       generatedStem('other', 'asset://imported/other.wav'),
       generatedStem('vocals', 'asset://imported/vocals.wav'),
     ]);
