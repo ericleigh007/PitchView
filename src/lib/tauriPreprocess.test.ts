@@ -16,7 +16,7 @@ const loadModule = async (options?: {
   vi.doUnmock('@tauri-apps/plugin-dialog');
 
   if (options?.core) {
-    vi.doMock('@tauri-apps/api/core', () => options.core);
+    vi.doMock('@tauri-apps/api/core', () => ({ ...options.core }));
   } else {
     vi.doMock('@tauri-apps/api/core', () => ({
       isTauri: () => false,

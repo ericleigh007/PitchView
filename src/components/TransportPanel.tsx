@@ -1,5 +1,5 @@
 import { LockIcon } from './LockIcon';
-import { formatClock, getAudibleState } from '../lib/sync';
+import { MAX_LAYER_HEIGHT, MAX_LAYER_WIDTH, MIN_LAYER_HEIGHT, MIN_LAYER_WIDTH, formatClock, getAudibleState } from '../lib/sync';
 import type { MixMode, PlayerState, TransportAction } from '../lib/types';
 
 type TransportPanelProps = {
@@ -95,8 +95,8 @@ export function TransportPanel({ player, players, dispatch, selected, onTogglePl
           <span>Width</span>
           <input
             type="range"
-            min={720}
-            max={1500}
+            min={MIN_LAYER_WIDTH}
+            max={MAX_LAYER_WIDTH}
             step={20}
             value={player.width}
             onChange={(event) =>
@@ -109,8 +109,8 @@ export function TransportPanel({ player, players, dispatch, selected, onTogglePl
           <span>Height</span>
           <input
             type="range"
-            min={420}
-            max={920}
+            min={MIN_LAYER_HEIGHT}
+            max={MAX_LAYER_HEIGHT}
             step={20}
             value={player.height}
             onChange={(event) =>

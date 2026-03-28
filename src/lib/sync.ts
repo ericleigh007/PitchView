@@ -1,8 +1,17 @@
 import type { AppState, PlayerState, TransportAction } from './types';
 
+export const MIN_LAYER_WIDTH = 280;
+export const MAX_LAYER_WIDTH = 1500;
+export const MIN_LAYER_HEIGHT = 240;
+export const MAX_LAYER_HEIGHT = 920;
+export const MIN_LAYER_OFFSET_X = -480;
+export const MAX_LAYER_OFFSET_X = 2200;
+export const MIN_LAYER_OFFSET_Y = -240;
+export const MAX_LAYER_OFFSET_Y = 1600;
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const clampLayerWidth = (value: number) => clamp(value, 720, 1500);
-const clampLayerHeight = (value: number) => clamp(value, 420, 920);
+const clampLayerWidth = (value: number) => clamp(value, MIN_LAYER_WIDTH, MAX_LAYER_WIDTH);
+const clampLayerHeight = (value: number) => clamp(value, MIN_LAYER_HEIGHT, MAX_LAYER_HEIGHT);
 
 const withSelectedPlayer = (state: AppState, playerId: string) => {
   const player = state.players.find((entry) => entry.id === playerId);
@@ -377,8 +386,8 @@ export const appReducer = (state: AppState, action: TransportAction): AppState =
           player.id === action.playerId
             ? {
                 ...player,
-                offsetX: clamp(action.offsetX, -120, 220),
-                offsetY: clamp(action.offsetY, -80, 220),
+                offsetX: clamp(action.offsetX, MIN_LAYER_OFFSET_X, MAX_LAYER_OFFSET_X),
+                offsetY: clamp(action.offsetY, MIN_LAYER_OFFSET_Y, MAX_LAYER_OFFSET_Y),
               }
             : player,
         ),

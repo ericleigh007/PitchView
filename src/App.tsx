@@ -1,6 +1,8 @@
 import { useEffect, useRef, useReducer, useState } from 'react';
+import { AmplitudeStrip } from './components/AmplitudeStrip';
 import { PitchGraph } from './components/PitchGraph';
 import { TransportPanel } from './components/TransportPanel';
+import { analyzeAmplitudeFromMediaSource } from './lib/amplitudeAnalysis';
 import { initialState } from './lib/data';
 import { analyzePitchDiagnostics } from './lib/pitchDiagnostics';
 import { analyzePitchFromMediaSource } from './lib/pitchAnalysis';
@@ -8,7 +10,16 @@ import { buildVisiblePitchPoints } from './lib/pitchDisplay';
 import { buildPreprocessPlan } from './lib/preprocessPlan';
 import { classifyGeneratedStemFile } from './lib/stemFiles';
 import { defaultStemModelId, stemModelProfiles } from './lib/stemModels';
-import { appReducer, formatClock, getAudibleState, getMasterPosition } from './lib/sync';
+import {
+  MAX_LAYER_HEIGHT,
+  MAX_LAYER_WIDTH,
+  MIN_LAYER_HEIGHT,
+  MIN_LAYER_WIDTH,
+  appReducer,
+  formatClock,
+  getAudibleState,
+  getMasterPosition,
+} from './lib/sync';
 import { convertLocalFileToAssetUrl, detectPreprocessBackends, pickMediaFile, runPreprocessJob } from './lib/tauriPreprocess';
 import type { PlayerState, StemTrack, TransportAction } from './lib/types';
 
@@ -350,6 +361,8 @@ export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const amplitudeRequestsRef = useRef(new Set<string>());
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [dragState, setDragState] = useState<{
     playerId: string;
@@ -372,6 +385,8 @@ export default function App() {
     phase: 'select',
     message: 'Desktop preprocessing idle',
   });
+  const [amplitudeBySourceUrl, setAmplitudeBySourceUrl] = useState<Record<string, Awaited<ReturnType<typeof analyzeAmplitudeFromMediaSource>>>>({});
+  const [amplitudeStatusBySourceUrl, setAmplitudeStatusBySourceUrl] = useState<Record<string, 'idle' | 'loading' | 'ready' | 'error'>>({});
   const demoCycleStartRef = useRef<number | null>(null);
   const demoStepIndexRef = useRef(0);
   const analysisRequestsRef = useRef(new Set<string>());
@@ -381,8 +396,27 @@ export default function App() {
   const masterPosition = getMasterPosition(state.players);
   const anyPlaying = state.players.some((player) => player.isPlaying);
   const selectedPitchStem = resolvePitchStem(selectedPlayer, state.pitchStemPreferenceId);
+  const selectedAudibleState = getAudibleState(state.players, selectedPlayer.id);
+  const selectedTargetIds = importTargetPlayerIds.length > 0 ? importTargetPlayerIds : state.players.map((player) => player.id);
+  const loadingPitchCount = state.players.filter((player) => player.pitchStatus === 'loading').length;
   const preprocessPhaseIndex = PREPROCESS_PHASES.indexOf(preprocessStatus.phase);
   const preprocessProgressPercent = preprocessStatus.state === 'idle' ? 0 : ((preprocessPhaseIndex + 1) / PREPROCESS_PHASES.length) * 100;
+  const workspaceStatusTone =
+    preprocessStatus.state === 'error'
+      ? 'error'
+      : preprocessStatus.state === 'running'
+        ? 'running'
+        : preprocessStatus.state === 'done'
+          ? 'done'
+          : loadingPitchCount > 0
+            ? 'running'
+            : 'idle';
+  const workspaceStatusMessage =
+    preprocessStatus.state === 'running'
+      ? preprocessStatus.message
+      : loadingPitchCount > 0
+        ? `Analyzing pitch for ${loadingPitchCount} ${loadingPitchCount === 1 ? 'window' : 'windows'}...`
+        : preprocessStatus.message;
 
   const pushDebugLog = (level: DebugLogEntry['level'], message: string, data?: unknown) => {
     const detail = formatDebugData(data);
@@ -628,6 +662,53 @@ export default function App() {
         });
     }
   }, [state.pitchStemPreferenceId, state.players]);
+
+  useEffect(() => {
+    const sourceUrls = new Set<string>();
+
+    for (const player of state.players) {
+      const activeStem = player.availableStems.find((stem) => stem.id === player.activeStemId);
+      const amplitudeSourceUrl = activeStem?.sourceUrl ?? player.mediaSourceUrl;
+      if (!amplitudeSourceUrl) {
+        continue;
+      }
+
+      sourceUrls.add(amplitudeSourceUrl);
+
+      if (amplitudeBySourceUrl[amplitudeSourceUrl] || amplitudeRequestsRef.current.has(amplitudeSourceUrl)) {
+        continue;
+      }
+
+      amplitudeRequestsRef.current.add(amplitudeSourceUrl);
+      setAmplitudeStatusBySourceUrl((current) => ({ ...current, [amplitudeSourceUrl]: 'loading' }));
+
+      void analyzeAmplitudeFromMediaSource(amplitudeSourceUrl)
+        .then((points) => {
+          setAmplitudeBySourceUrl((current) => ({ ...current, [amplitudeSourceUrl]: points }));
+          setAmplitudeStatusBySourceUrl((current) => ({ ...current, [amplitudeSourceUrl]: 'ready' }));
+        })
+        .catch((error) => {
+          pushDebugLog('warn', 'Amplitude analysis failed for media source.', {
+            sourceUrl: amplitudeSourceUrl,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          setAmplitudeStatusBySourceUrl((current) => ({ ...current, [amplitudeSourceUrl]: 'error' }));
+        })
+        .finally(() => {
+          amplitudeRequestsRef.current.delete(amplitudeSourceUrl);
+        });
+    }
+
+    setAmplitudeStatusBySourceUrl((current) => {
+      const nextEntries = Object.entries(current).filter(([sourceUrl]) => sourceUrls.has(sourceUrl));
+      return nextEntries.length === Object.keys(current).length ? current : Object.fromEntries(nextEntries);
+    });
+
+    setAmplitudeBySourceUrl((current) => {
+      const nextEntries = Object.entries(current).filter(([sourceUrl]) => sourceUrls.has(sourceUrl));
+      return nextEntries.length === Object.keys(current).length ? current : Object.fromEntries(nextEntries);
+    });
+  }, [amplitudeBySourceUrl, state.players]);
 
   useEffect(() => {
     if (!demoRunning) {
@@ -979,6 +1060,59 @@ export default function App() {
     setDragState(null);
   };
 
+  const nudgeSelectedLayerPosition = (deltaX: number, deltaY: number) => {
+    dispatch({
+      type: 'set-layer-position',
+      playerId: selectedPlayer.id,
+      offsetX: selectedPlayer.offsetX + deltaX,
+      offsetY: selectedPlayer.offsetY + deltaY,
+    });
+  };
+
+  const handleTileLayers = () => {
+    const playerCount = state.players.length;
+    if (playerCount === 0) {
+      return;
+    }
+
+    const stageBounds = stageRef.current?.getBoundingClientRect();
+    const stageWidth = Math.max(960, Math.floor(stageBounds?.width ?? 1320));
+    const stageHeight = Math.max(620, Math.floor(stageBounds?.height ?? 1120));
+    const inset = 18;
+    const gap = 18;
+    const usableWidth = Math.max(
+      playerCount * MIN_LAYER_WIDTH,
+      stageWidth - inset * 2 - gap * Math.max(0, playerCount - 1),
+    );
+    const tileWidth = Math.max(
+      MIN_LAYER_WIDTH,
+      Math.min(MAX_LAYER_WIDTH, Math.floor(usableWidth / playerCount)),
+    );
+    const tileHeight = Math.max(
+      MIN_LAYER_HEIGHT,
+      Math.min(MAX_LAYER_HEIGHT, Math.min(stageHeight - 220, Math.round(tileWidth * 0.82))),
+    );
+
+    state.players.forEach((player, index) => {
+      dispatch({ type: 'set-layer-size', playerId: player.id, width: tileWidth, height: tileHeight });
+      dispatch({
+        type: 'set-layer-position',
+        playerId: player.id,
+        offsetX: index * (tileWidth + gap),
+        offsetY: 0,
+      });
+      dispatch({ type: 'set-z-index', playerId: player.id, zIndex: playerCount - index });
+    });
+
+    pushDebugLog('info', 'Tiled windows across the stage.', {
+      playerCount,
+      tileWidth,
+      tileHeight,
+      stageWidth,
+      stageHeight,
+    });
+  };
+
   const handleImportButtonClick = () => {
     void handleBrowseImport();
   };
@@ -1027,143 +1161,100 @@ export default function App() {
   };
 
   return (
-    <main className="app-shell">
-      <section className="hero panel">
-        <div>
-          <p className="eyebrow">PitchView MVP Slice</p>
-          <h1>Audio-only and transparent-video players with per-player pitch overlays</h1>
-          <p className="hero__lede">
-            Each player can now represent either an audio-only source or a video source. Transparent video layers can be
-            stacked and dragged for comparison, while audio-only sources still render their own pitch overlay and take
-            part in the same sync and mix workflow.
-          </p>
-        </div>
+    <main className="app-shell app-shell--workspace">
+      <input ref={importInputRef} className="visually-hidden" type="file" accept="audio/*,video/*" onChange={handleImportMediaChange} />
 
-        <div className="hero__metrics">
+      <section className="panel workspace-toolbar">
+        <div className="workspace-toolbar__head">
           <div>
-            <span>Master Time</span>
-            <strong>{formatClock(masterPosition)}</strong>
+            <p className="eyebrow">PitchView Workspace</p>
+            <h1>Overlay windows, align phrasing, and inspect pitch without leaving the stage</h1>
           </div>
-          <div>
-            <span>Visible Window</span>
-            <strong>{state.timeScaleSec.toFixed(1)}s</strong>
-          </div>
-          <div>
-            <span>Pitch Span</span>
-            <strong>{state.pitchRangeSemitones} st</strong>
-          </div>
-          <div>
-            <span>Pitch Source</span>
-            <strong>{selectedPitchStem.label}</strong>
-          </div>
-          <div>
-            <span>Pitch Center</span>
-            <strong>{state.pitchCenterMode}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel demo-panel">
-        <div>
-          <p className="eyebrow">Autoplay Demo</p>
-          <h2>{demoScene}</h2>
-          <p className="demo-panel__lede">
-            This scripted loop drives the real transport, sync, mix, opacity, zoom, and stacking state so the demo can
-            be started when needed and reused as a verification pass. The current build leaves autoplay off so manual
-            work starts in a stable state.
-          </p>
-        </div>
-        <div className="demo-panel__meta">
-          <span>Loop {demoLoopCount}</span>
-          <span>{(demoElapsedMs / 1000).toFixed(1)}s / {(DEMO_DURATION_MS / 1000).toFixed(0)}s</span>
-          <span>{demoRunning ? 'running' : demoLoopCount > 0 ? 'paused' : 'idle'}</span>
-          <span>sample-backed playback</span>
-        </div>
-        <div className="demo-panel__actions">
-          <button className="chip chip--active" onClick={toggleDemoPlayback}>
-            {demoRunning ? 'Pause Demo' : demoLoopCount > 0 ? 'Resume Demo' : 'Start Demo'}
-          </button>
-          <button className="chip" onClick={restartDemo}>Restart Demo</button>
-          <button className="chip" onClick={handleBrowserImportButtonClick}>Browse Media</button>
-          <button className="chip" onClick={handleLogDisplayedPitchPoints}>Log Display Points</button>
-          <input ref={importInputRef} className="visually-hidden" type="file" accept="audio/*,video/*" onChange={handleImportMediaChange} />
-        </div>
-        <div className="demo-panel__target-grid">
-          <span className="demo-panel__target-label">Import Targets</span>
-          <button className={importTargetPlayerIds.length === state.players.length ? 'chip chip--active' : 'chip'} onClick={selectAllImportTargets}>
-            All Players
-          </button>
-          {state.players.map((player) => (
-            <button
-              key={player.id}
-              className={importTargetPlayerIds.includes(player.id) ? 'chip chip--active' : 'chip'}
-              onClick={() => toggleImportTarget(player.id)}
-            >
-              {player.name}
+          <div className="workspace-toolbar__actions">
+            <button className="chip chip--active" onClick={handleBrowserImportButtonClick}>Open Media</button>
+            <button className="chip" onClick={handleImportButtonClick}>Browse Native</button>
+            <button className="chip" onClick={() => void handleImportAndPreprocess()} disabled={preprocessStatus.state === 'running'}>
+              {preprocessStatus.state === 'running' ? 'Generating…' : 'Generate Stems'}
             </button>
-          ))}
+          </div>
         </div>
-        <div className="demo-panel__path-row">
-          <label className="controls-panel__select demo-panel__path-input">
-            <span>Desktop source path</span>
-            <input value={importSourcePath} onChange={(event) => setImportSourcePath(event.currentTarget.value)} placeholder="C:\\media\\take01.mov" />
-          </label>
-          <button className="chip" onClick={handleImportButtonClick}>Browse Native</button>
-          <button className="chip" onClick={() => void handlePathImport()}>Import Path</button>
-          <button className="chip" onClick={() => void handleImportAndPreprocess()} disabled={preprocessStatus.state === 'running'}>
-            {preprocessStatus.state === 'running' ? 'Generating…' : 'Import + Generate Stems'}
-          </button>
-        </div>
-        <div className="demo-panel__meta demo-panel__meta--status">
-          <span>{preprocessStatus.state}</span>
-          <span>{preprocessStatus.phase}</span>
-          <span>{preprocessStatus.message}</span>
-        </div>
-        <div className="demo-panel__progress demo-panel__progress--preprocess">
-          <div style={{ width: `${preprocessProgressPercent}%` }} />
-        </div>
-        <div className="demo-panel__log" aria-live="polite">
-          {debugLogs.length === 0 ? <div className="demo-panel__log-line">No debug events yet.</div> : null}
-          {debugLogs.map((entry, index) => (
-            <div key={`${entry.timestamp}-${index}`} className={`demo-panel__log-line demo-panel__log-line--${entry.level}`}>
-              <strong>{entry.timestamp}</strong> {entry.message}
-            </div>
-          ))}
-        </div>
-        <div className="demo-panel__phase-strip" role="list" aria-label="Preprocess phases">
-          {PREPROCESS_PHASES.map((phase, index) => {
-            const isComplete = index < preprocessPhaseIndex || preprocessStatus.state === 'done';
-            const isActive = phase === preprocessStatus.phase && preprocessStatus.state === 'running';
-            const isError = phase === preprocessStatus.phase && preprocessStatus.state === 'error';
-            return (
-              <span
-                key={phase}
-                role="listitem"
-                className={`demo-panel__phase ${isComplete ? 'is-complete' : ''} ${isActive ? 'is-active' : ''} ${isError ? 'is-error' : ''}`.trim()}
-              >
-                {phase}
-              </span>
-            );
-          })}
-        </div>
-        <div className="demo-panel__progress">
-          <div style={{ width: `${(demoElapsedMs / DEMO_DURATION_MS) * 100}%` }} />
-        </div>
-      </section>
 
-      <section className="panel model-panel">
-        <div>
-          <p className="eyebrow">Stem Models</p>
-          <h2>{selectedStemModel.label}</h2>
-          <p className="demo-panel__lede">
-            Stem separation is driven by a selected AI model. FFmpeg is only used for media decode, normalization, and
-              container handling around that model pipeline. In the desktop shell, a local file path can now import and
-              run the worker directly for the selected players.
-          </p>
-        </div>
-        <div className="model-panel__controls">
-          <label>
-            <span>Preprocess Model</span>
+        <div className="workspace-toolbar__grid">
+          <div className="workspace-toolbar__section">
+            <span className="workspace-toolbar__label">Targets</span>
+            <div className="chip-row">
+              <button className={selectedTargetIds.length === state.players.length ? 'chip chip--active' : 'chip'} onClick={selectAllImportTargets}>
+                All
+              </button>
+              {state.players.map((player) => (
+                <button
+                  key={player.id}
+                  className={selectedTargetIds.includes(player.id) ? 'chip chip--active' : 'chip'}
+                  onClick={() => toggleImportTarget(player.id)}
+                >
+                  {player.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="workspace-toolbar__section">
+            <span className="workspace-toolbar__label">Time</span>
+            <div className="chip-row">
+              {timeScaleOptions.map((option) => (
+                <button
+                  key={option}
+                  className={state.timeScaleSec === option ? 'chip chip--active' : 'chip'}
+                  onClick={() => dispatch({ type: 'set-time-scale', timeScaleSec: option })}
+                >
+                  {option.toFixed(option < 1 ? 1 : 0)}s
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="workspace-toolbar__section">
+            <span className="workspace-toolbar__label">Pitch Span</span>
+            <div className="chip-row">
+              {pitchRangeOptions.map((option) => (
+                <button
+                  key={option}
+                  className={state.pitchRangeSemitones === option ? 'chip chip--active' : 'chip'}
+                  onClick={() => dispatch({ type: 'set-pitch-range', pitchRangeSemitones: option })}
+                >
+                  {option} st
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="controls-panel__select workspace-toolbar__select">
+            <span>Pitch Source</span>
+            <select
+              value={state.pitchStemPreferenceId}
+              onChange={(event) => dispatch({ type: 'set-pitch-stem-preference', stemId: event.currentTarget.value })}
+            >
+              <option value="vocals">Separated vocals</option>
+              <option value="original">Original mix</option>
+              <option value="other">Other stem</option>
+            </select>
+          </label>
+
+          <label className="controls-panel__select workspace-toolbar__select">
+            <span>Pitch Center</span>
+            <select
+              value={state.pitchCenterMode}
+              onChange={(event) =>
+                dispatch({ type: 'set-pitch-center-mode', pitchCenterMode: event.currentTarget.value as 'fixed' | 'adaptive' })
+              }
+            >
+              <option value="adaptive">Adaptive</option>
+              <option value="fixed">Fixed around C4</option>
+            </select>
+          </label>
+
+          <label className="controls-panel__select workspace-toolbar__select">
+            <span>Stem Model</span>
             <select value={selectedStemModelId} onChange={(event) => setSelectedStemModelId(event.currentTarget.value)}>
               {stemModelProfiles.map((model) => (
                 <option key={model.id} value={model.id}>
@@ -1173,43 +1264,32 @@ export default function App() {
             </select>
           </label>
         </div>
-        <div className="model-panel__grid">
-          <div>
-            <span>Family</span>
-            <strong>{selectedStemModel.family}</strong>
+
+        <div className={`workspace-status workspace-status--${workspaceStatusTone}`}>
+          <div className="workspace-status__summary">
+            <span className="workspace-status__badge">
+              {workspaceStatusTone === 'running' ? 'Working' : workspaceStatusTone === 'done' ? 'Ready' : workspaceStatusTone === 'error' ? 'Issue' : 'Idle'}
+            </span>
+            <strong>{workspaceStatusMessage}</strong>
+            <span>Master {formatClock(masterPosition)}</span>
+            <span>{selectedPitchStem.label}</span>
+            <span>{selectedStemModel.label}</span>
           </div>
-          <div>
-            <span>Quality</span>
-            <strong>{selectedStemModel.quality}</strong>
-          </div>
-          <div>
-            <span>Strengths</span>
-            <strong>{selectedStemModel.strengths}</strong>
-          </div>
-          <div>
-            <span>Constraints</span>
-            <strong>{selectedStemModel.constraints}</strong>
-          </div>
-          <div>
-            <span>Output Plan</span>
-            <strong>{selectedStemModel.output}</strong>
-          </div>
-          <div>
-            <span>Execution Backend</span>
-            <strong>{preprocessPlan.backend}</strong>
-          </div>
-          <div>
-            <span>Install Hint</span>
-            <strong>{preprocessPlan.installHint}</strong>
-          </div>
-          <div>
-            <span>Expected Outputs</span>
-            <strong>{preprocessPlan.expectedOutputs.join(', ')}</strong>
-          </div>
-          <div>
-            <span>Command Preview</span>
-            <strong>{preprocessPlan.commandPreview}</strong>
-          </div>
+          {workspaceStatusTone === 'running' ? (
+            <div className={`workspace-status__progress ${loadingPitchCount > 0 && preprocessStatus.state !== 'running' ? 'workspace-status__progress--indeterminate' : ''}`}>
+              <div style={preprocessStatus.state === 'running' ? { width: `${preprocessProgressPercent}%` } : undefined} />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="demo-panel__path-row">
+          <label className="controls-panel__select demo-panel__path-input">
+            <span>Desktop source path</span>
+            <input value={importSourcePath} onChange={(event) => setImportSourcePath(event.currentTarget.value)} placeholder="C:\\media\\take01.mov" />
+          </label>
+          <button className="chip" onClick={() => void handlePathImport()}>Import Path</button>
+          <button className="chip" onClick={toggleDemoPlayback}>{demoRunning ? 'Pause Demo' : 'Start Demo'}</button>
+          <button className="chip" onClick={handleLogDisplayedPitchPoints}>Log Display Points</button>
         </div>
       </section>
 
@@ -1220,17 +1300,24 @@ export default function App() {
               <p className="eyebrow">Layer Stack</p>
               <h2>Stack transparent video or audio-first players and compare pitch alignment</h2>
             </div>
-            <p className="stage-panel__note">
+            <div className="stage-panel__header-actions">
+              <button className="chip" onClick={handleTileLayers}>Tile Windows</button>
+              <p className="stage-panel__note">
                 The stage now keeps metadata out of the graph area. Pitch overlays follow the preferred stem setting,
                 defaulting to vocals when that stem is available.
-            </p>
+              </p>
+            </div>
           </div>
 
-          <div className="video-stage">
+          <div ref={stageRef} className="video-stage">
             {stackedPlayers.map((player) => {
               const { audible, emphasis } = getAudibleState(state.players, player.id);
               const focusTimeSec = player.isLocked ? masterPosition : player.positionSec;
               const pitchStem = resolvePitchStem(player, state.pitchStemPreferenceId);
+              const activeStem = player.availableStems.find((stem) => stem.id === player.activeStemId);
+              const amplitudeSourceUrl = activeStem?.sourceUrl ?? player.mediaSourceUrl;
+              const amplitudePoints = amplitudeBySourceUrl[amplitudeSourceUrl] ?? [];
+              const amplitudeStatus = amplitudeStatusBySourceUrl[amplitudeSourceUrl] ?? 'idle';
               const midiCenter = state.pitchCenterMode === 'adaptive' ? getAdaptiveMidiCenter(player, focusTimeSec, state.timeScaleSec) : 60;
               const lineOpacity = 0.76 + player.opacity * 0.24;
               return (
@@ -1294,6 +1381,7 @@ export default function App() {
                     <span className="video-layer__tag">Pitch: {pitchStem.label}</span>
                     <span className="video-layer__tag">{getPitchStatusLabel(player.pitchStatus)}</span>
                     <span className="video-layer__tag">{audible ? player.mixMode : 'suppressed'}</span>
+                    <span className="video-layer__tag">{player.width} x {player.height}</span>
                     <details className="video-layer__menu" data-layer-control="true">
                       <summary className="video-layer__tag video-layer__tag--button">Controls</summary>
                       <div className="video-layer__menu-panel">
@@ -1394,6 +1482,12 @@ export default function App() {
                       lineOpacity={lineOpacity}
                     />
                   </div>
+                  <div className="video-layer__resize" data-layer-control="true">
+                    <button onClick={() => dispatch({ type: 'nudge-layer-size', playerId: player.id, deltaWidth: -60, deltaHeight: -40 })}>-</button>
+                    <button onClick={() => dispatch({ type: 'nudge-layer-size', playerId: player.id, deltaWidth: 60 })}>W+</button>
+                    <button onClick={() => dispatch({ type: 'nudge-layer-size', playerId: player.id, deltaHeight: 40 })}>H+</button>
+                    <button onClick={() => dispatch({ type: 'nudge-layer-size', playerId: player.id, deltaWidth: 60, deltaHeight: 40 })}>+</button>
+                  </div>
                   <div className="video-layer__transport" data-layer-control="true">
                     <button onClick={() => dispatch({ type: 'stop', playerId: player.id })}>Stop</button>
                     <button onClick={() => dispatch({ type: 'skip', playerId: player.id, deltaSec: -1 })}>-1s</button>
@@ -1412,74 +1506,210 @@ export default function App() {
                       }
                     />
                   </div>
+                  <div className="video-layer__amplitude-shell" data-layer-control="true">
+                    <AmplitudeStrip
+                      points={amplitudePoints}
+                      playerName={player.name}
+                      focusTimeSec={focusTimeSec}
+                      timeScaleSec={state.timeScaleSec}
+                      color={player.lineColor}
+                      status={amplitudeStatus}
+                    />
+                  </div>
                 </div>
               );
             })}
           </div>
         </section>
-      </section>
 
-      <section className="panel controls-panel">
-        <div className="controls-panel__block">
-          <p className="eyebrow">Time Scale</p>
-          <div className="chip-row">
-            {timeScaleOptions.map((option) => (
+        <aside className="panel stage-inspector">
+          <div className="stage-inspector__header">
+            <p className="eyebrow">Selected Window</p>
+            <h3>{selectedPlayer.name}</h3>
+            <p className="stage-inspector__lede">
+              Keep overlayed windows on stage and use this inspector to adjust the focused layer without opening the floating menu.
+            </p>
+          </div>
+
+          <div className="stage-inspector__player-list" role="tablist" aria-label="Select a window to adjust">
+            {state.players.map((player) => (
               <button
-                key={option}
-                className={state.timeScaleSec === option ? 'chip chip--active' : 'chip'}
-                onClick={() => dispatch({ type: 'set-time-scale', timeScaleSec: option })}
+                key={player.id}
+                className={`stage-inspector__player-chip ${selectedPlayer.id === player.id ? 'stage-inspector__player-chip--active' : ''}`}
+                onClick={() => dispatch({ type: 'select-player', playerId: player.id })}
               >
-                {option.toFixed(option < 1 ? 1 : 0)}s
+                <strong>{player.name}</strong>
+                <span>{player.sourceLabel}</span>
               </button>
             ))}
           </div>
-        </div>
 
-        <div className="controls-panel__block">
-          <p className="eyebrow">Pitch Span</p>
-          <div className="chip-row">
-            {pitchRangeOptions.map((option) => (
-              <button
-                key={option}
-                className={state.pitchRangeSemitones === option ? 'chip chip--active' : 'chip'}
-                onClick={() => dispatch({ type: 'set-pitch-range', pitchRangeSemitones: option })}
-              >
-                {option} st
-              </button>
-            ))}
+          <div className="stage-inspector__summary-grid">
+            <div>
+              <span>Playback</span>
+              <strong>{selectedPlayer.isPlaying ? 'Playing' : 'Paused'}</strong>
+            </div>
+            <div>
+              <span>Audio</span>
+              <strong>{selectedAudibleState.audible ? selectedPlayer.mixMode : 'suppressed'}</strong>
+            </div>
+            <div>
+              <span>Position</span>
+              <strong>{formatClock(selectedPlayer.positionSec)}</strong>
+            </div>
+            <div>
+              <span>Layer</span>
+              <strong>{selectedPlayer.zIndex}</strong>
+            </div>
           </div>
-        </div>
 
-        <div className="controls-panel__block">
-          <p className="eyebrow">Pitch Stem</p>
-          <label className="controls-panel__select">
-            <span>Graph source</span>
-            <select
-              value={state.pitchStemPreferenceId}
-              onChange={(event) => dispatch({ type: 'set-pitch-stem-preference', stemId: event.currentTarget.value })}
-            >
-              <option value="vocals">Separated vocals</option>
-              <option value="original">Original mix</option>
-              <option value="other">Other stem</option>
-            </select>
-          </label>
-        </div>
+          <div className="stage-inspector__actions">
+            <button className="chip chip--active" onClick={() => handleTogglePlay(selectedPlayer.id)}>
+              {selectedPlayer.isPlaying ? 'Pause' : 'Play'}
+            </button>
+            <button className="chip" onClick={() => dispatch({ type: 'toggle-lock', playerId: selectedPlayer.id })}>
+              {selectedPlayer.isLocked ? 'Unlock Window' : 'Lock To Group'}
+            </button>
+            <button className="chip" onClick={() => dispatch({ type: 'set-layer-size', playerId: selectedPlayer.id, width: 1120, height: 680 })}>
+              Reset Size
+            </button>
+          </div>
 
-        <div className="controls-panel__block">
-          <p className="eyebrow">Pitch Center</p>
-          <label className="controls-panel__select">
-            <span>Vertical focus</span>
-            <select
-              value={state.pitchCenterMode}
-              onChange={(event) =>
-                dispatch({ type: 'set-pitch-center-mode', pitchCenterMode: event.currentTarget.value as 'fixed' | 'adaptive' })
-              }
-            >
-              <option value="adaptive">Adaptive to visible singer range</option>
-              <option value="fixed">Fixed around C4</option>
-            </select>
-          </label>
-        </div>
+          <div className="stage-inspector__controls-grid">
+            <label className="stage-inspector__field stage-inspector__field--full">
+              <span>Stem</span>
+              <select
+                value={selectedPlayer.activeStemId}
+                onChange={(event) =>
+                  dispatch({ type: 'set-active-stem', playerId: selectedPlayer.id, stemId: event.currentTarget.value })
+                }
+              >
+                {selectedPlayer.availableStems.map((stem) => (
+                  <option key={stem.id} value={stem.id}>
+                    {stem.label}
+                    {stem.status === 'planned' ? ' (planned)' : stem.status === 'generated' ? ' (ready)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Mix</span>
+              <select
+                value={selectedPlayer.mixMode}
+                onChange={(event) =>
+                  dispatch({
+                    type: 'set-mix-mode',
+                    playerId: selectedPlayer.id,
+                    mixMode: event.currentTarget.value as PlayerState['mixMode'],
+                  })
+                }
+              >
+                {mixModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Line Color</span>
+              <input
+                type="color"
+                value={selectedPlayer.lineColor}
+                onChange={(event) =>
+                  dispatch({ type: 'set-line-color', playerId: selectedPlayer.id, lineColor: event.currentTarget.value })
+                }
+              />
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Opacity</span>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={selectedPlayer.opacity}
+                onChange={(event) =>
+                  dispatch({ type: 'set-opacity', playerId: selectedPlayer.id, opacity: Number(event.currentTarget.value) })
+                }
+              />
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Line Width</span>
+              <input
+                type="range"
+                min={0.5}
+                max={1.5}
+                step={0.05}
+                value={selectedPlayer.lineWidth}
+                onChange={(event) =>
+                  dispatch({ type: 'set-line-width', playerId: selectedPlayer.id, lineWidth: Number(event.currentTarget.value) })
+                }
+              />
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Layer Order</span>
+              <input
+                type="range"
+                min={1}
+                max={8}
+                step={1}
+                value={selectedPlayer.zIndex}
+                onChange={(event) =>
+                  dispatch({ type: 'set-z-index', playerId: selectedPlayer.id, zIndex: Number(event.currentTarget.value) })
+                }
+              />
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Width</span>
+              <input
+                type="range"
+                min={MIN_LAYER_WIDTH}
+                max={MAX_LAYER_WIDTH}
+                step={20}
+                value={selectedPlayer.width}
+                onChange={(event) =>
+                  dispatch({ type: 'set-layer-size', playerId: selectedPlayer.id, width: Number(event.currentTarget.value) })
+                }
+              />
+            </label>
+
+            <label className="stage-inspector__field">
+              <span>Height</span>
+              <input
+                type="range"
+                min={MIN_LAYER_HEIGHT}
+                max={MAX_LAYER_HEIGHT}
+                step={20}
+                value={selectedPlayer.height}
+                onChange={(event) =>
+                  dispatch({ type: 'set-layer-size', playerId: selectedPlayer.id, height: Number(event.currentTarget.value) })
+                }
+              />
+            </label>
+
+            <div className="stage-inspector__field stage-inspector__field--full">
+              <span>Move Window</span>
+              <div className="stage-inspector__move-grid">
+                <button onClick={() => nudgeSelectedLayerPosition(0, -20)}>Up</button>
+                <button onClick={() => nudgeSelectedLayerPosition(-20, 0)}>Left</button>
+                <button onClick={() => nudgeSelectedLayerPosition(20, 0)}>Right</button>
+                <button onClick={() => nudgeSelectedLayerPosition(0, 20)}>Down</button>
+              </div>
+              <div className="stage-inspector__position-readout">
+                <span>X {selectedPlayer.offsetX}</span>
+                <span>Y {selectedPlayer.offsetY}</span>
+                <span>{selectedPlayer.width} x {selectedPlayer.height}</span>
+              </div>
+            </div>
+          </div>
+        </aside>
       </section>
 
       <section className="transport-grid">

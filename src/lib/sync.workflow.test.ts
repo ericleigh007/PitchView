@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { initialState } from './data';
-import { appReducer, getAudibleState, getMasterPosition } from './sync';
+import { MIN_LAYER_OFFSET_X, MAX_LAYER_OFFSET_Y, appReducer, getAudibleState, getMasterPosition } from './sync';
 
 describe('appReducer workflow modes', () => {
   it('toggles play across the locked group only', () => {
@@ -107,15 +107,15 @@ describe('appReducer workflow modes', () => {
       type: 'set-layer-position',
       playerId: 'lead',
       offsetX: -999,
-      offsetY: 999,
+      offsetY: 9999,
     });
 
     const lead = moved.players.find((player) => player.id === 'lead');
 
     expect(lead?.width).toBe(1500);
-    expect(lead?.height).toBe(420);
-    expect(lead?.offsetX).toBe(-120);
-    expect(lead?.offsetY).toBe(220);
+    expect(lead?.height).toBe(240);
+    expect(lead?.offsetX).toBe(MIN_LAYER_OFFSET_X);
+    expect(lead?.offsetY).toBe(MAX_LAYER_OFFSET_Y);
   });
 });
 
