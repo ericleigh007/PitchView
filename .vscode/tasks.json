@@ -559,6 +559,82 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "git-commit-tasks-followup",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"commit",
+				"-m",
+				"Capture current VS Code task updates"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-status-final-clean",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-diff-ignore-eol-tasks",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"diff",
+				"--ignore-space-at-eol",
+				"--",
+				".vscode/tasks.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-hash-object-tasks-working",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"hash-object",
+				".vscode/tasks.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-show-head-tasks",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"show",
+				"HEAD:.vscode/tasks.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-add-gitattributes-and-tasks",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"add",
+				".gitattributes",
+				".vscode/tasks.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }
