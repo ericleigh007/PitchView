@@ -19,6 +19,7 @@
     "test": "powershell -ExecutionPolicy Bypass -File ./scripts/test.ps1",
     "dev:loop": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-loop.ps1",
     "test:gui": "powershell -ExecutionPolicy Bypass -File ./scripts/gui-test.ps1",
-    "benchmark:preprocess": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark-runtime.ps1"
+    "benchmark:preprocess": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark-runtime.ps1",
+    "capture:readme-screenshots": "powershell -ExecutionPolicy Bypass -File ./scripts/capture-readme-screenshots.ps1"
   }
 }
