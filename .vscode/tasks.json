@@ -1,0 +1,514 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "validate-bootstrap-full",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\bootstrap.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect-local-torch-build",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-c",
+				"import json, torch; print(json.dumps({'torch_version': torch.__version__, 'cuda_available': bool(torch.cuda.is_available()), 'cuda_version': torch.version.cuda, 'device_count': torch.cuda.device_count()}))"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect-local-torch-build-cmd",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				".\\.venv\\Scripts\\python.exe -c \"import json, torch; print(json.dumps({'torch_version': torch.__version__, 'cuda_available': bool(torch.cuda.is_available()), 'cuda_version': torch.version.cuda, 'device_count': torch.cuda.device_count()}))\""
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect-local-torch-build-script",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-c",
+				"import json, torch; print(json.dumps({'torch_version': torch.__version__, 'cuda_available': bool(torch.cuda.is_available()), 'cuda_version': torch.version.cuda, 'device_count': torch.cuda.device_count()}))"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-bootstrap-guidance",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\bootstrap.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-bootstrap-guidance-2",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\bootstrap.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "detect-nvidia-smi",
+			"type": "shell",
+			"command": "nvidia-smi",
+			"args": [
+				"--query-gpu=name,driver_version",
+				"--format=csv,noheader"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "detect-winget",
+			"type": "shell",
+			"command": "winget",
+			"args": [
+				"--version"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "detect-ffmpeg",
+			"type": "shell",
+			"command": "ffmpeg",
+			"args": [
+				"-version"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "detect-nvidia-smi-full",
+			"type": "shell",
+			"command": "nvidia-smi",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "detect-gpu-name-driver",
+			"type": "shell",
+			"command": "nvidia-smi",
+			"args": [
+				"--query-gpu=name,driver_version",
+				"--format=csv,noheader"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "winget-search-ffmpeg",
+			"type": "shell",
+			"command": "winget",
+			"args": [
+				"search",
+				"ffmpeg"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "pip-show-torch",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pip",
+				"show",
+				"torch"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "install-ffmpeg-winget",
+			"type": "shell",
+			"command": "winget",
+			"args": [
+				"install",
+				"--id",
+				"Gyan.FFmpeg",
+				"--exact",
+				"--accept-package-agreements",
+				"--accept-source-agreements"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "install-torch-cu130",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pip",
+				"install",
+				"--upgrade",
+				"--force-reinstall",
+				"torch",
+				"torchaudio",
+				"--index-url",
+				"https://download.pytorch.org/whl/cu130"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "locate-ffmpeg-winget",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"$roots=@($env:LOCALAPPDATA+'\\Microsoft\\WinGet\\Packages',$env:ProgramFiles,$env:ProgramFiles+'\\WindowsApps'); Get-ChildItem -Path $roots -Filter ffmpeg.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 10 -ExpandProperty FullName"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-local-cuda-torch",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-c",
+				"import json, torch; print(json.dumps({'torch_version': torch.__version__, 'cuda_available': bool(torch.cuda.is_available()), 'cuda_version': torch.version.cuda, 'device_count': torch.cuda.device_count(), 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}))"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-cuda-torch-script",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-c",
+				"import json, torch; print(json.dumps({'torch_version': torch.__version__, 'cuda_available': bool(torch.cuda.is_available()), 'cuda_version': torch.version.cuda, 'device_count': torch.cuda.device_count(), 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}))"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "locate-ffmpeg-script",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"$roots=@((Join-Path $env:LOCALAPPDATA 'Microsoft\\WinGet\\Packages'),$env:ProgramFiles,(Join-Path $env:ProgramFiles 'WindowsApps'),(Join-Path $env:LOCALAPPDATA 'Microsoft\\WinGet\\Links')); Get-ChildItem -Path $roots -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20 -ExpandProperty FullName"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-cuda-bootstrap",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\bootstrap.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "probe-backend-cuda",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"tools\\preprocess_media.py",
+				"check-backend"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "measure-runtime-gpu",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\benchmark-runtime.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect-torchcrepe-load",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-c",
+				"import inspect, torchcrepe.load; print(inspect.getsource(torchcrepe.load))"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-cuda-bootstrap-fast",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\bootstrap.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-python-unit-tests",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"unittest",
+				"tests.test_preprocess_media",
+				"tests.test_pitch_accuracy"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rerun-python-unit-tests",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"unittest",
+				"tests.test_preprocess_media",
+				"tests.test_pitch_accuracy"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rerun-runtime-gpu",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\benchmark-runtime.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rerun-python-unit-tests-2",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"unittest",
+				"tests.test_preprocess_media",
+				"tests.test_pitch_accuracy"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rerun-runtime-gpu-2",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\benchmark-runtime.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-frontend-regression-tests",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"app/frontend",
+				"run",
+				"test",
+				"--",
+				"App.test.tsx",
+				"workspace.test.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rerun-frontend-regression-tests",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"app/frontend",
+				"run",
+				"test",
+				"--",
+				"App.test.tsx",
+				"workspace.test.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect-external-clip-size",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"$item = Get-Item '.tmp\\gui-e2e\\external_clip.mp4' -ErrorAction Stop; [pscustomobject]@{LengthBytes=$item.Length; LengthMB=[math]::Round($item.Length/1MB,2)} | ConvertTo-Json -Compress"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-durable-preprocess-benchmark",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\benchmark-runtime.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-init-local",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"init"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-status-local",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-status-before-ignore",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-status-after-ignore",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "git-add-initial-snapshot",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"add",
+				"."
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

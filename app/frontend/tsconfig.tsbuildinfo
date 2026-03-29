@@ -1,0 +1,1 @@
+{"root":["./src/app.test.tsx","./src/app.tsx","./src/errorboundary.tsx","./src/analysis.test.ts","./src/analysis.ts","./src/demo.test.ts","./src/demo.ts","./src/desktop.ts","./src/main.tsx","./src/types.ts","./src/workspace.test.ts","./src/workspace.ts","./vite.config.ts"],"version":"5.9.3"}

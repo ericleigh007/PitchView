@@ -1,0 +1,24 @@
+{
+  "name": "pitchview",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "app/frontend"
+  ],
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.1",
+    "@wdio/cli": "^9.19.2",
+    "@wdio/local-runner": "^9.19.2",
+    "@wdio/mocha-framework": "^9.19.2",
+    "@wdio/spec-reporter": "^9.19.2"
+  },
+  "scripts": {
+    "bootstrap": "powershell -ExecutionPolicy Bypass -File ./scripts/bootstrap.ps1",
+    "run": "powershell -ExecutionPolicy Bypass -File ./scripts/run.ps1",
+    "build": "powershell -ExecutionPolicy Bypass -File ./scripts/build.ps1",
+    "test": "powershell -ExecutionPolicy Bypass -File ./scripts/test.ps1",
+    "dev:loop": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-loop.ps1",
+    "test:gui": "powershell -ExecutionPolicy Bypass -File ./scripts/gui-test.ps1",
+    "benchmark:preprocess": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark-runtime.ps1"
+  }
+}

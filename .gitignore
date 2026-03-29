@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+.tmp/
+memory/
+msedgedriver.exe
+data/*.db
+app/desktop/src-tauri/target/
+app/desktop/src-tauri/gen/

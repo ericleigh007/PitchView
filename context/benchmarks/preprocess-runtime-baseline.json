@@ -1,0 +1,47 @@
+{
+  "benchmark_spec": {
+    "stimulus_notation": "e2e/fixtures/stimulus-accuracy.pvabc",
+    "stimulus_wav": ".tmp/gui-e2e/stimulus_accuracy.wav",
+    "stimulus_metadata": ".tmp/gui-e2e/stimulus_accuracy.json",
+    "stimulus_sha256": "c91691eeeaf764c0ecaadcd03ae949952ae2524f2c6420ad0394f4434674f392",
+    "stimulus_notation_sha256": "20fc2aee0cb744ee5033b52e37fadf1288fa29468ce045a98091bd9c7470c91f",
+    "external_benchmark": {
+      "source_mode": "existing-clip",
+      "clip_path": ".tmp/gui-e2e/external_clip.mp4",
+      "clip_sha256": "a1523116612223f4d4f087eb652c2ab358d79d635693483d44ab406bd1d32c29"
+    }
+  },
+  "environment": {
+    "python_executable": "C:\\Users\\ericl\\Documents\\PitchView\\.venv\\Scripts\\python.exe",
+    "ffmpeg_path": "C:\\Users\\ericl\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffmpeg.exe",
+    "ffprobe_path": "C:\\Users\\ericl\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffprobe.exe",
+    "torch_available": true,
+    "torch_cuda_available": true,
+    "torchcrepe_available": true,
+    "torch_version": "2.11.0+cu130",
+    "cuda_version": "13.0",
+    "device_count": 1,
+    "device_name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+  },
+  "calibrated_stimulus": {
+    "duration_seconds": 2.292,
+    "elapsed_seconds": 1.771,
+    "pitch_model_requested": "torch-cuda",
+    "pitch_model_used": "torch-cuda",
+    "processing_device_requested": "gpu",
+    "processing_device_used": "cuda",
+    "analysis_source": "original",
+    "cache_status": "miss"
+  },
+  "realworld_10s": {
+    "duration_seconds": 10.01,
+    "elapsed_seconds": 2.513,
+    "pitch_model_requested": "torch-cuda",
+    "pitch_model_used": "torch-cuda",
+    "processing_device_requested": "gpu",
+    "processing_device_used": "cuda",
+    "analysis_source": "vocals",
+    "cache_status": "miss",
+    "separation_status": "completed"
+  }
+}

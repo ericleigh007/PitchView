@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PitchView",
+  "version": "0.1.0",
+  "identifier": "com.pitchview.app",
+  "build": {
+    "beforeDevCommand": "npm --workspace app/frontend run dev",
+    "beforeBuildCommand": "npm --workspace app/frontend run build",
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "PitchView",
+        "width": 1600,
+        "height": 1020,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**/analysis-cache/**/*"
+        ]
+      },
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "nsis",
+    "icon": []
+  }
+}

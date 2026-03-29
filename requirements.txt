@@ -1,0 +1,7 @@
+# Base Python dependencies for PitchView.
+# Bootstrap installs CUDA-enabled torch and torchaudio separately before
+# resolving this file so the repo-local .\.venv stays GPU-capable.
+numpy
+torch
+torchcrepe
+demucs

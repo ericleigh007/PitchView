@@ -1,0 +1,8 @@
+{
+  "mode": "development",
+  "desktopFirst": true,
+  "browserMode": "test-only",
+  "defaultPlayers": 4,
+  "preferredStemModel": "Vocals Mel-Band Roformer",
+  "preferredPitchDetector": "yin"
+}
