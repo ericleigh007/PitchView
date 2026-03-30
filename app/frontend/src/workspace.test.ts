@@ -19,6 +19,10 @@ describe("workspace model", () => {
 
     expect(project.layers).toHaveLength(4);
     expect(project.selectedLayerId).toBe("layer-1");
+    expect(project.layers[0]).toMatchObject({
+      pitchKey: "C",
+      pitchScaleMode: "chromatic"
+    });
   });
 
   test("tiles layers into evenly spaced horizontal columns across the stage", () => {

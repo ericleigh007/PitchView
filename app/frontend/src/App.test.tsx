@@ -1000,6 +1000,63 @@ describe("App desktop regressions", () => {
     expect(Math.abs(gridTop - pointTop)).toBeLessThan(0.75);
   });
 
+  test("uses circle-of-fifths spelling and bolds only notes in the selected major scale", async () => {
+    const project = createSingleLayerProject();
+    project.layers[0] = {
+      ...project.layers[0],
+      mediaKind: "audio",
+      mediaSourceUrl: "file://C:/media/tone.wav",
+      sourcePath: "C:/media/tone.wav",
+      availableSources: [
+        { kind: "original", label: "Original", path: "C:/media/tone.wav", url: "file://C:/media/tone.wav" }
+      ],
+      duration: 6,
+      pitchContour: Array.from({ length: 24 }, () => 440),
+      pitchConfidence: Array.from({ length: 24 }, () => 0.98),
+      amplitudeEnvelope: Array.from({ length: 24 }, () => 0.3),
+      pitchSpan: 12,
+      pitchCenterMode: "adaptive",
+      analysisState: "ready"
+    };
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      const pitchPath = container.querySelector(".pitch-overlay-line") as SVGPathElement | null;
+      expect(pitchPath?.getAttribute("d")).toBeTruthy();
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Key for Player 1"), { target: { value: "F" } });
+    fireEvent.change(screen.getByLabelText("Scale for Player 1"), { target: { value: "major" } });
+
+    await waitFor(() => {
+      const labelTexts = Array.from(container.querySelectorAll(".note-scale-note"), (element) => element.textContent);
+      expect(labelTexts).toContain("Bb4");
+      expect(labelTexts).not.toContain("A#4");
+    });
+
+    const noteMarks = Array.from(container.querySelectorAll(".note-scale-mark")) as HTMLSpanElement[];
+    const bbMark = noteMarks.find((element) => element.querySelector(".note-scale-note")?.textContent === "Bb4") ?? null;
+    const bMark = noteMarks.find((element) => element.querySelector(".note-scale-note")?.textContent === "B4") ?? null;
+    const bbNote = bbMark?.querySelector(".note-scale-note") as HTMLSpanElement | null;
+    const bNote = bMark?.querySelector(".note-scale-note") as HTMLSpanElement | null;
+
+    expect(bbMark?.className).toContain("note-scale-mark-in-scale");
+    expect(bMark?.className ?? "").not.toContain("note-scale-mark-in-scale");
+    expect(bbNote?.className ?? "").toContain("note-scale-note-in-scale");
+    expect(bNote?.className ?? "").not.toContain("note-scale-note-in-scale");
+
+    fireEvent.change(screen.getByLabelText("Key for Player 1"), { target: { value: "G" } });
+
+    await waitFor(() => {
+      const labelTexts = Array.from(container.querySelectorAll(".note-scale-note"), (element) => element.textContent);
+      expect(labelTexts).toContain("F#4");
+      expect(labelTexts).not.toContain("Gb4");
+    });
+  });
+
   test("suppresses low-energy false pitch markers inside rests", async () => {
     const project = createSingleLayerProject();
     project.layers[0] = {

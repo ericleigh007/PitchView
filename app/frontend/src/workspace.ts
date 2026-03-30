@@ -81,6 +81,8 @@ export function createDefaultLayers(count = 4): PlayerLayer[] {
     pitchContourIntensity: 0.85,
     pitchCenterMode: "adaptive",
     pitchCenterOffset: 0,
+    pitchKey: "C",
+    pitchScaleMode: "chromatic",
     amplitudeEnvelope: [],
     pitchContour: [],
     pitchConfidence: [],

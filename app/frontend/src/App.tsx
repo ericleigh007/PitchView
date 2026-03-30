@@ -16,7 +16,7 @@ import {
   toDesktopMediaUrl,
   type DesktopAnalysisPayload
 } from "./desktop";
-import type { PitchAnalysisSourceKind, PlayerLayer, ProcessingDeviceMode } from "./types";
+import type { MusicalKey, PitchAnalysisSourceKind, PitchScaleMode, PlayerLayer, ProcessingDeviceMode } from "./types";
 import {
   addLayer,
   assignImportedMedia,
@@ -182,7 +182,26 @@ function formatProcessingDeviceLabel(device: ProcessingDeviceMode): string {
   }
 }
 
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const SHARP_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const FLAT_NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const CIRCLE_OF_FIFTHS_KEYS: MusicalKey[] = ["C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F"];
+const FLAT_KEYS = new Set<MusicalKey>(["F", "Bb", "Eb", "Ab", "Db"]);
+const KEY_TO_SEMITONE: Record<MusicalKey, number> = {
+  C: 0,
+  G: 7,
+  D: 2,
+  A: 9,
+  E: 4,
+  B: 11,
+  "F#": 6,
+  Db: 1,
+  Ab: 8,
+  Eb: 3,
+  Bb: 10,
+  F: 5
+};
+const MAJOR_SCALE_INTERVALS = new Set([0, 2, 4, 5, 7, 9, 11]);
+const MINOR_SCALE_INTERVALS = new Set([0, 2, 3, 5, 7, 8, 10]);
 
 function buildEnvelopePath(values: number[], width: number, height: number, totalDuration: number, startTime = 0, endTime = totalDuration): string {
   if (!values.length) {
@@ -454,7 +473,7 @@ function buildPitchPoints(layer: PlayerLayer, width: number, height: number, sta
       x,
       y,
       frequency: value,
-      noteLabel: formatNoteLabel(value),
+      noteLabel: formatNoteLabel(value, layer.pitchKey),
       timeSeconds,
       semitoneOffset
     }];
@@ -471,15 +490,28 @@ function getLayerCenterPitch(layer: PlayerLayer): number {
   return 220 * Math.pow(2, layer.pitchCenterOffset / 12);
 }
 
-function formatNoteLabel(frequency: number): string {
+function keyUsesFlats(key: MusicalKey): boolean {
+  return FLAT_KEYS.has(key);
+}
+
+function getNoteNameForMidi(midi: number, key: MusicalKey): string {
+  const noteNames = keyUsesFlats(key) ? FLAT_NOTE_NAMES : SHARP_NOTE_NAMES;
+  return noteNames[((midi % 12) + 12) % 12];
+}
+
+function formatMidiNoteLabel(midi: number, key: MusicalKey): string {
+  const noteName = getNoteNameForMidi(midi, key);
+  const octave = Math.floor(midi / 12) - 1;
+  return `${noteName}${octave}`;
+}
+
+function formatNoteLabel(frequency: number, key: MusicalKey): string {
   if (!Number.isFinite(frequency) || frequency <= 0) {
     return "--";
   }
 
   const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
-  const noteName = NOTE_NAMES[((midi % 12) + 12) % 12];
-  const octave = Math.floor(midi / 12) - 1;
-  return `${noteName}${octave}`;
+  return formatMidiNoteLabel(midi, key);
 }
 
 function midiToFrequency(midi: number): number {
@@ -502,12 +534,25 @@ function getPitchGridStep(pitchSpan: number): number {
   return 4;
 }
 
+function isMidiInSelectedScale(midi: number, key: MusicalKey, scaleMode: PitchScaleMode): boolean {
+  if (scaleMode === "chromatic") {
+    return true;
+  }
+
+  const tonic = KEY_TO_SEMITONE[key];
+  const normalized = (((midi % 12) - tonic) % 12 + 12) % 12;
+  return scaleMode === "major"
+    ? MAJOR_SCALE_INTERVALS.has(normalized)
+    : MINOR_SCALE_INTERVALS.has(normalized);
+}
+
 function getPitchScaleLabels(layer: PlayerLayer): Array<{
   noteLabel: string;
   positionPercent: number;
   frequency: number;
   isPrimary: boolean;
   isCenter: boolean;
+  isInScale: boolean;
 }> {
   const centerPitch = getLayerCenterPitch(layer);
   const centerMidi = Math.round(69 + 12 * Math.log2(centerPitch / 440));
@@ -520,16 +565,18 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
     const frequency = midiToFrequency(midi);
     const distanceFromCenter = Math.abs(semitoneOffset);
     const isCenter = semitoneOffset === 0;
-    const isPrimary = isCenter || semitoneOffset % gridStep === 0;
+    const isInScale = isMidiInSelectedScale(midi, layer.pitchKey, layer.pitchScaleMode);
+    const isPrimary = isCenter || semitoneOffset % gridStep === 0 || (layer.pitchScaleMode !== "chromatic" && isInScale);
     const y = getPitchPlotYForFrequency(layer, PITCH_PLOT_HEIGHT, frequency) ?? 0;
     const positionPercent = (y / PITCH_PLOT_HEIGHT) * 100;
 
     return {
-      noteLabel: formatNoteLabel(frequency),
+      noteLabel: formatMidiNoteLabel(midi, layer.pitchKey),
       positionPercent,
       frequency,
       isPrimary,
-      isCenter: distanceFromCenter === 0
+      isCenter: distanceFromCenter === 0,
+      isInScale
     };
   });
 }
@@ -2177,6 +2224,32 @@ function App() {
                           </label>
 
                           <label>
+                            <span>Key</span>
+                            <select
+                              aria-label={`Key for ${layer.name}`}
+                              value={layer.pitchKey}
+                              onChange={(event) => patchLayer(layer.id, { pitchKey: event.target.value as MusicalKey })}
+                            >
+                              {CIRCLE_OF_FIFTHS_KEYS.map((key) => (
+                                <option key={key} value={key}>{key}</option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <label>
+                            <span>Scale</span>
+                            <select
+                              aria-label={`Scale for ${layer.name}`}
+                              value={layer.pitchScaleMode}
+                              onChange={(event) => patchLayer(layer.id, { pitchScaleMode: event.target.value as PitchScaleMode })}
+                            >
+                              <option value="chromatic">Chromatic</option>
+                              <option value="major">Major</option>
+                              <option value="minor">Minor</option>
+                            </select>
+                          </label>
+
+                          <label>
                             <span>Contour width</span>
                             <input
                               type="range"
@@ -2254,12 +2327,12 @@ function App() {
                                   <span
                                     key={`${layer.id}-${entry.noteLabel}-${entry.frequency}`}
                                     className={entry.isPrimary
-                                      ? "note-scale-mark note-scale-mark-primary"
-                                      : "note-scale-mark"}
+                                      ? `note-scale-mark${entry.isInScale ? " note-scale-mark-in-scale note-scale-mark-primary" : " note-scale-mark-primary"}`
+                                      : `note-scale-mark${entry.isInScale ? " note-scale-mark-in-scale" : ""}`}
                                     style={{ top: `${entry.positionPercent}%` }}
                                   >
                                     <span className="note-scale-guide" />
-                                    <span className="note-scale-note">{entry.noteLabel}</span>
+                                    <span className={entry.isInScale ? "note-scale-note note-scale-note-in-scale" : "note-scale-note"}>{entry.noteLabel}</span>
                                   </span>
                                 ))}
                               </div>
@@ -2324,7 +2397,11 @@ function App() {
                                     {pitchScaleLabels.filter((entry) => entry.isPrimary).map((entry) => (
                                       <span
                                         key={`${layer.id}-grid-${entry.noteLabel}-${entry.frequency}`}
-                                        className={entry.isCenter ? "pitch-grid-line pitch-grid-line-center" : "pitch-grid-line"}
+                                        className={[
+                                          "pitch-grid-line",
+                                          entry.isCenter ? "pitch-grid-line-center" : "",
+                                          entry.isInScale ? "pitch-grid-line-in-scale" : ""
+                                        ].filter(Boolean).join(" ")}
                                         style={{ top: `${entry.positionPercent}%` }}
                                       />
                                     ))}

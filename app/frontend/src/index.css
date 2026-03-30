@@ -785,6 +785,10 @@ p {
   opacity: 0.9;
 }
 
+.note-scale-mark-in-scale {
+  opacity: 0.98;
+}
+
 .note-scale-guide {
   flex: 0 0 0.85rem;
   width: 0.85rem;
@@ -801,8 +805,21 @@ p {
 
 .note-scale-mark-primary .note-scale-note {
   font-size: 0.71rem;
-  font-weight: 700;
+  font-weight: 600;
   color: rgba(239, 244, 239, 0.96);
+}
+
+.note-scale-mark-in-scale .note-scale-note {
+  font-weight: 700;
+  color: rgba(214, 255, 107, 0.96);
+}
+
+.note-scale-note-in-scale {
+  font-weight: 700;
+}
+
+.note-scale-mark-in-scale .note-scale-guide {
+  border-top-color: rgba(214, 255, 107, 0.5);
 }
 
 .note-scale-mark-primary .note-scale-guide {
@@ -891,6 +908,10 @@ p {
 .pitch-grid-line-center {
   border-top-color: rgba(214, 255, 107, 0.28);
   border-top-width: 1.5px;
+}
+
+.pitch-grid-line-in-scale {
+  border-top-color: rgba(214, 255, 107, 0.22);
 }
 
 .amplitude-strip,

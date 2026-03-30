@@ -1,5 +1,9 @@
 export type PitchCenterMode = "adaptive" | "fixed";
 
+export type PitchScaleMode = "chromatic" | "major" | "minor";
+
+export type MusicalKey = "C" | "G" | "D" | "A" | "E" | "B" | "F#" | "Db" | "Ab" | "Eb" | "Bb" | "F";
+
 export type MixMode = "blend" | "solo" | "mute";
 
 export type MediaKind = "none" | "audio" | "video";
@@ -52,6 +56,8 @@ export type PlayerLayer = {
   pitchContourIntensity: number;
   pitchCenterMode: PitchCenterMode;
   pitchCenterOffset: number;
+  pitchKey: MusicalKey;
+  pitchScaleMode: PitchScaleMode;
   amplitudeEnvelope: number[];
   pitchContour: number[];
   pitchConfidence: number[];
