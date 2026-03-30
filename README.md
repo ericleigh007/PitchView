@@ -89,29 +89,43 @@ npm run capture:readme-screenshots
 
 ## Prerequisites
 
-Install these before bootstrapping the repo:
+Run the prerequisite checker first:
 
-1. Node.js
-2. Python 3 with `py` or `python` available so bootstrap can create `.venv`
-3. Rust and Cargo
-4. FFmpeg and FFprobe
-5. NVIDIA drivers with a supported CUDA runtime
+```powershell
+npm run check:prerequisites
+```
 
-For GUI automation, also install:
+It reports detected versions, missing tools, and install help for anything that does not meet the project baseline.
 
-1. Microsoft Edge
+Core prerequisites:
+
+1. Windows 10 or Windows 11
+2. Windows PowerShell 5.1 or newer
+3. Node.js 20.19.0 or newer
+4. npm bundled with that supported Node.js install
+5. Python 3.12 or newer, with `py` or `python` available so bootstrap can create `.venv`
+6. Rust toolchain 1.77.2 or newer, with `cargo` available; current stable Rust is recommended
+7. FFmpeg and FFprobe available from `PATH` or a WinGet installation
+8. NVIDIA drivers exposing CUDA 12.6 or newer through `nvidia-smi`
+
+GUI-only prerequisites:
+
+1. Microsoft Edge for `npm run test:gui`
+2. Microsoft Edge for `npm run capture:readme-screenshots`
 
 Notes:
 
 - PitchView uses the repository-local `.venv` only. Do not point the app or scripts at another Python environment.
 - Bootstrap installs CUDA-enabled `torch` and `torchaudio` into `.venv` based on the CUDA runtime reported by `nvidia-smi`.
 - FFmpeg and FFprobe can come from `PATH` or a WinGet installation. The scripts will try both.
+- The GUI scripts install `tauri-driver` and `msedgedriver-tool` automatically after the base prerequisites are in place.
 
 ## Quick Start
 
 From the repository root:
 
 ```powershell
+npm run check:prerequisites
 npm run bootstrap
 npm run run
 ```
@@ -148,6 +162,7 @@ npm run run
 npm run build
 npm run test
 npm run test:gui
+npm run check:prerequisites
 npm run benchmark:preprocess
 npm run capture:readme-screenshots
 ```
@@ -159,6 +174,7 @@ What they do:
 - `npm run build`: build the frontend and run `cargo check` on the desktop host
 - `npm run test`: run frontend tests, demo verification, and Python smoke tests
 - `npm run test:gui`: run desktop GUI automation through Edge WebDriver
+- `npm run check:prerequisites`: validate required system tools and print install help for anything missing
 - `npm run benchmark:preprocess`: run the tracked preprocessing benchmark and refresh the baseline JSON
 - `npm run capture:readme-screenshots`: regenerate README screenshots from the desktop app
 
