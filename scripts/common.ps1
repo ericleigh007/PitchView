@@ -63,7 +63,7 @@ function Ensure-PitchViewTauriDriver {
   $driverPath = Join-Path $HOME ".cargo\bin\tauri-driver.exe"
   if (-not (Test-Path $driverPath)) {
     Write-Host "[PitchView] Installing tauri-driver"
-    cargo install tauri-driver --locked
+    cargo install tauri-driver --locked | Out-Host
     if ($LASTEXITCODE -ne 0) {
       throw "Failed to install tauri-driver."
     }
@@ -106,14 +106,14 @@ function Ensure-PitchViewEdgeDriver {
 
   if (-not (Test-Path $driverTool)) {
     Write-Host "[PitchView] Installing msedgedriver-tool"
-    cargo install --git https://github.com/chippers/msedgedriver-tool --locked
+    cargo install --git https://github.com/chippers/msedgedriver-tool --locked | Out-Host
     if ($LASTEXITCODE -ne 0) {
       throw "Failed to install msedgedriver-tool."
     }
   }
 
   Write-Host "[PitchView] Downloading Edge WebDriver $edgeVersion via msedgedriver-tool"
-  & $driverTool --output-dir $driverRoot
+  & $driverTool --output-dir $driverRoot | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "Edge WebDriver download failed for Edge $edgeVersion."
   }
