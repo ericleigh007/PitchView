@@ -4,6 +4,29 @@ const PROJECT_STORAGE_KEY = "pitchview.workspace.v2";
 const DEFAULT_STAGE_WIDTH = 1280;
 const DEFAULT_STAGE_HEIGHT = 920;
 
+export const FIXED_PITCH_CENTER_REFERENCE_MIDI = 57;
+export const FIXED_PITCH_CENTER_MIN = -24;
+export const FIXED_PITCH_CENTER_MAX = 24;
+export const PITCH_RANGE_VALUES = [12, 24, 36] as const;
+
+function normalizePitchSpan(pitchSpan: number): number {
+  if (!Number.isFinite(pitchSpan)) {
+    return 24;
+  }
+
+  return PITCH_RANGE_VALUES.reduce((closest, option) => (
+    Math.abs(option - pitchSpan) < Math.abs(closest - pitchSpan) ? option : closest
+  ), PITCH_RANGE_VALUES[0]);
+}
+
+function normalizePitchCenterOffset(offset: number): number {
+  if (!Number.isFinite(offset)) {
+    return 0;
+  }
+
+  return Math.max(FIXED_PITCH_CENTER_MIN, Math.min(FIXED_PITCH_CENTER_MAX, Math.round(offset)));
+}
+
 export type ImportTarget = "selected" | "synced" | "all";
 
 export type ImportedMedia = {
@@ -121,9 +144,19 @@ export function selectLayer(project: WorkspaceProject, layerId: string): Workspa
 }
 
 export function updateLayer(project: WorkspaceProject, layerId: string, patch: Partial<PlayerLayer>): WorkspaceProject {
+  const normalizedPatch: Partial<PlayerLayer> = { ...patch };
+
+  if (patch.pitchSpan !== undefined) {
+    normalizedPatch.pitchSpan = normalizePitchSpan(patch.pitchSpan);
+  }
+
+  if (patch.pitchCenterOffset !== undefined) {
+    normalizedPatch.pitchCenterOffset = normalizePitchCenterOffset(patch.pitchCenterOffset);
+  }
+
   return {
     ...project,
-    layers: project.layers.map((layer) => layer.id === layerId ? { ...layer, ...patch } : layer)
+    layers: project.layers.map((layer) => layer.id === layerId ? { ...layer, ...normalizedPatch } : layer)
   };
 }
 
@@ -408,10 +441,18 @@ export function hydrateProject(project: WorkspaceProject): WorkspaceProject {
     ...defaults,
     ...project,
     recentFiles: project.recentFiles ?? [],
-    layers: (project.layers?.length ? project.layers : defaults.layers).map((layer, index) => ({
-      ...layerDefaults[index],
-      ...layer
-    }))
+    layers: (project.layers?.length ? project.layers : defaults.layers).map((layer, index) => {
+      const hydratedLayer = {
+        ...layerDefaults[index],
+        ...layer
+      };
+
+      return {
+        ...hydratedLayer,
+        pitchSpan: normalizePitchSpan(hydratedLayer.pitchSpan),
+        pitchCenterOffset: normalizePitchCenterOffset(hydratedLayer.pitchCenterOffset)
+      };
+    })
   };
 }
 

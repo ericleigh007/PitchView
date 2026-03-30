@@ -22,11 +22,15 @@ import {
   assignImportedMedia,
   assignImportedMediaToLayerIds,
   bringLayerToFront,
+  FIXED_PITCH_CENTER_MAX,
+  FIXED_PITCH_CENTER_MIN,
+  FIXED_PITCH_CENTER_REFERENCE_MIDI,
   getImportTargetLayerIds,
   getPlaybackTargetLayerIds,
   hydrateProject,
   loadProject,
   moveLayer,
+  PITCH_RANGE_VALUES,
   removeLayer,
   removeSelectedLayer,
   saveProject,
@@ -480,14 +484,28 @@ function buildPitchPoints(layer: PlayerLayer, width: number, height: number, sta
   });
 }
 
+function frequencyToMidi(frequency: number): number {
+  return 69 + 12 * Math.log2(frequency / 440);
+}
+
 function getLayerCenterPitch(layer: PlayerLayer): number {
   const contour = getReliablePitchContour(layer).filter((value) => value > 0);
 
   if (layer.pitchCenterMode === "adaptive" && contour.length) {
-    return contour.reduce((sum, value) => sum + value, 0) / contour.length;
+    const averageMidi = contour.reduce((sum, value) => sum + frequencyToMidi(value), 0) / contour.length;
+    return midiToFrequency(Math.round(averageMidi));
   }
 
-  return 220 * Math.pow(2, layer.pitchCenterOffset / 12);
+  return midiToFrequency(FIXED_PITCH_CENTER_REFERENCE_MIDI + layer.pitchCenterOffset);
+}
+
+function getDisplayedPitchCenterOffset(layer: PlayerLayer): number {
+  if (layer.pitchCenterMode === "adaptive") {
+    const adaptiveOffset = Math.round(frequencyToMidi(getLayerCenterPitch(layer))) - FIXED_PITCH_CENTER_REFERENCE_MIDI;
+    return clamp(adaptiveOffset, FIXED_PITCH_CENTER_MIN, FIXED_PITCH_CENTER_MAX);
+  }
+
+  return layer.pitchCenterOffset;
 }
 
 function keyUsesFlats(key: MusicalKey): boolean {
@@ -510,7 +528,7 @@ function formatNoteLabel(frequency: number, key: MusicalKey): string {
     return "--";
   }
 
-  const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
+  const midi = Math.round(frequencyToMidi(frequency));
   return formatMidiNoteLabel(midi, key);
 }
 
@@ -534,6 +552,35 @@ function getPitchGridStep(pitchSpan: number): number {
   return 4;
 }
 
+function formatScaleModeLabel(scaleMode: PitchScaleMode): string {
+  switch (scaleMode) {
+    case "major":
+      return "Maj";
+    case "minor":
+      return "Min";
+    default:
+      return "Chromatic";
+  }
+}
+
+function formatPitchRangeLabel(pitchSpan: number): string {
+  switch (pitchSpan) {
+    case 12:
+      return "1 Octave";
+    case 24:
+      return "2 Octaves";
+    case 36:
+      return "3 Octaves";
+    default:
+      return `${Math.max(1, Math.round(pitchSpan / 12))} Octaves`;
+  }
+}
+
+function formatPitchCenterControlLabel(layer: PlayerLayer): string {
+  const displayedOffset = getDisplayedPitchCenterOffset(layer);
+  return formatMidiNoteLabel(FIXED_PITCH_CENTER_REFERENCE_MIDI + displayedOffset, layer.pitchKey);
+}
+
 function isMidiInSelectedScale(midi: number, key: MusicalKey, scaleMode: PitchScaleMode): boolean {
   if (scaleMode === "chromatic") {
     return true;
@@ -555,7 +602,7 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
   isInScale: boolean;
 }> {
   const centerPitch = getLayerCenterPitch(layer);
-  const centerMidi = Math.round(69 + 12 * Math.log2(centerPitch / 440));
+  const centerMidi = Math.round(frequencyToMidi(centerPitch));
   const halfSpan = Math.max(Math.round(layer.pitchSpan / 2), 1);
   const gridStep = getPitchGridStep(layer.pitchSpan);
 
@@ -566,7 +613,9 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
     const distanceFromCenter = Math.abs(semitoneOffset);
     const isCenter = semitoneOffset === 0;
     const isInScale = isMidiInSelectedScale(midi, layer.pitchKey, layer.pitchScaleMode);
-    const isPrimary = isCenter || semitoneOffset % gridStep === 0 || (layer.pitchScaleMode !== "chromatic" && isInScale);
+    const isPrimary = layer.pitchScaleMode === "chromatic"
+      ? isCenter || semitoneOffset % gridStep === 0
+      : isCenter || isInScale;
     const y = getPitchPlotYForFrequency(layer, PITCH_PLOT_HEIGHT, frequency) ?? 0;
     const positionPercent = (y / PITCH_PLOT_HEIGHT) * 100;
 
@@ -1052,6 +1101,36 @@ function App() {
       setProject((current) => {
         let nextProject = current;
 
+        const syncClockCandidateIds = [
+          current.selectedLayerId,
+          ...current.layers
+            .filter((layer) => layer.syncLocked && layer.isPlaying && layer.id !== current.selectedLayerId)
+            .map((layer) => layer.id)
+        ];
+        const syncClock = syncClockCandidateIds.reduce<{ layerId: string; currentTime: number } | null>((clock, layerId) => {
+          if (clock) {
+            return clock;
+          }
+
+          const layer = current.layers.find((entry) => entry.id === layerId);
+          if (!layer || !layer.syncLocked || !layer.isPlaying) {
+            return null;
+          }
+
+          const refs = mediaRefs.current[layer.id];
+          const preferredElement = refs?.audio ?? refs?.visual ?? null;
+          if (!preferredElement) {
+            return null;
+          }
+
+          const currentTime = preferredElement.currentTime;
+          if (!Number.isFinite(currentTime)) {
+            return null;
+          }
+
+          return { layerId: layer.id, currentTime };
+        }, null);
+
         for (const layer of current.layers) {
           if (!layer.isPlaying) {
             continue;
@@ -1065,10 +1144,15 @@ function App() {
             continue;
           }
 
-          const currentTime = preferredElement.currentTime;
+          let currentTime = preferredElement.currentTime;
           const duration = Number.isFinite(preferredElement.duration) ? preferredElement.duration : layer.duration;
           if (!Number.isFinite(currentTime)) {
             continue;
+          }
+
+          if (syncClock && layer.syncLocked && layer.id !== syncClock.layerId && Math.abs(currentTime - syncClock.currentTime) > 0.05) {
+            preferredElement.currentTime = syncClock.currentTime;
+            currentTime = syncClock.currentTime;
           }
 
           if (layer.mediaKind === "video" && audioElement && visualElement) {
@@ -2200,27 +2284,48 @@ function App() {
                           </label>
 
                           <label>
-                            <span>Pitch span</span>
+                            <span className="control-label-row">
+                              <span>Pitch range</span>
+                              <span className="control-value" data-testid={`pitch-range-value-${layer.id}`}>{formatPitchRangeLabel(layer.pitchSpan)}</span>
+                            </span>
                             <input
                               type="range"
+                              aria-label={`Pitch range for ${layer.name}`}
                               min="12"
-                              max="48"
-                              step="1"
+                              max="36"
+                              step="12"
+                              list="pitch-range-detents"
                               value={layer.pitchSpan}
                               onChange={(event) => patchLayer(layer.id, { pitchSpan: Number(event.target.value) })}
                             />
+                            <span className="range-detent-labels" aria-hidden="true">
+                              <span>1 Oct</span>
+                              <span>2 Oct</span>
+                              <span>3 Oct</span>
+                            </span>
                           </label>
 
                           <label>
-                            <span>Pitch center</span>
+                            <span className="control-label-row">
+                              <span>Pitch center</span>
+                              <span className="control-value" data-testid={`pitch-center-value-${layer.id}`}>{formatPitchCenterControlLabel(layer)}</span>
+                            </span>
                             <input
                               type="range"
-                              min="-24"
-                              max="24"
+                              aria-label={`Pitch center note for ${layer.name}`}
+                              min={String(FIXED_PITCH_CENTER_MIN)}
+                              max={String(FIXED_PITCH_CENTER_MAX)}
                               step="1"
-                              value={layer.pitchCenterOffset}
+                              list="pitch-center-note-detents"
+                              disabled={layer.pitchCenterMode === "adaptive"}
+                              value={getDisplayedPitchCenterOffset(layer)}
                               onChange={(event) => patchLayer(layer.id, { pitchCenterOffset: Number(event.target.value) })}
                             />
+                            <span className="range-help-text">
+                              {layer.pitchCenterMode === "adaptive"
+                                ? "Adaptive center snaps to the nearest note. Switch to Fixed to choose a note center."
+                                : "Fixed note center with semitone detents."}
+                            </span>
                           </label>
 
                           <label>
@@ -2278,6 +2383,7 @@ function App() {
                           <label>
                             <span>Center mode</span>
                             <select
+                              aria-label={`Center mode for ${layer.name}`}
                               value={layer.pitchCenterMode}
                               onChange={(event) => patchLayer(layer.id, { pitchCenterMode: event.target.value as PlayerLayer["pitchCenterMode"] })}
                             >
@@ -2321,14 +2427,21 @@ function App() {
 
                           <div className="media-visual-stage">
                             <aside className="layer-note-scale" aria-hidden="true">
-                              <span className="rail-label">Scale</span>
+                              <span className="rail-label">
+                                {layer.pitchScaleMode === "chromatic"
+                                  ? "Chromatic"
+                                  : `${layer.pitchKey} ${formatScaleModeLabel(layer.pitchScaleMode)}`}
+                              </span>
                               <div className="note-scale-list">
                                 {pitchScaleLabels.map((entry) => (
                                   <span
                                     key={`${layer.id}-${entry.noteLabel}-${entry.frequency}`}
-                                    className={entry.isPrimary
-                                      ? `note-scale-mark${entry.isInScale ? " note-scale-mark-in-scale note-scale-mark-primary" : " note-scale-mark-primary"}`
-                                      : `note-scale-mark${entry.isInScale ? " note-scale-mark-in-scale" : ""}`}
+                                    className={[
+                                      "note-scale-mark",
+                                      entry.isPrimary ? "note-scale-mark-primary" : "",
+                                      entry.isInScale ? "note-scale-mark-in-scale" : "",
+                                      layer.pitchScaleMode !== "chromatic" && !entry.isInScale ? "note-scale-mark-out-of-scale" : ""
+                                    ].filter(Boolean).join(" ")}
                                     style={{ top: `${entry.positionPercent}%` }}
                                   >
                                     <span className="note-scale-guide" />
@@ -2394,12 +2507,14 @@ function App() {
                               <div className="pitch-overlay-viewport">
                                 <div className="pitch-overlay-content">
                                   <div className="pitch-grid" aria-hidden="true">
-                                    {pitchScaleLabels.filter((entry) => entry.isPrimary).map((entry) => (
+                                    {pitchScaleLabels.map((entry) => (
                                       <span
                                         key={`${layer.id}-grid-${entry.noteLabel}-${entry.frequency}`}
                                         className={[
                                           "pitch-grid-line",
+                                          entry.isPrimary ? "pitch-grid-line-primary" : "",
                                           entry.isCenter ? "pitch-grid-line-center" : "",
+                                          layer.pitchScaleMode !== "chromatic" && !entry.isInScale ? "pitch-grid-line-out-of-scale" : "",
                                           entry.isInScale ? "pitch-grid-line-in-scale" : ""
                                         ].filter(Boolean).join(" ")}
                                         style={{ top: `${entry.positionPercent}%` }}
@@ -2622,6 +2737,27 @@ function App() {
             </pre>
           </section>
         </section>
+
+        <datalist id="pitch-range-detents">
+          {PITCH_RANGE_VALUES.map((pitchRange) => (
+            <option key={pitchRange} value={pitchRange} label={formatPitchRangeLabel(pitchRange)} />
+          ))}
+        </datalist>
+
+        <datalist id="pitch-center-note-detents">
+          {Array.from({ length: FIXED_PITCH_CENTER_MAX - FIXED_PITCH_CENTER_MIN + 1 }, (_, index) => {
+            const offset = FIXED_PITCH_CENTER_MIN + index;
+            const showLabel = offset % 12 === 0;
+
+            return (
+              <option
+                key={offset}
+                value={offset}
+                label={showLabel ? formatMidiNoteLabel(FIXED_PITCH_CENTER_REFERENCE_MIDI + offset, "C") : undefined}
+              />
+            );
+          })}
+        </datalist>
       </main>
     </div>
   );

@@ -5,6 +5,7 @@ import {
   bringLayerToFront,
   createDefaultProject,
   getImportTargetLayerIds,
+  hydrateProject,
   moveLayer,
   seekLayers,
   selectLayerSource,
@@ -45,6 +46,23 @@ describe("workspace model", () => {
     expect(updated.layers.find((layer) => layer.id === "layer-3")).toMatchObject({
       pitchSpan: 36,
       syncLocked: false
+    });
+  });
+
+  test("normalizes stored pitch controls to supported detents during hydration", () => {
+    const project = createDefaultProject();
+    const hydrated = hydrateProject({
+      ...project,
+      layers: [{
+        ...project.layers[0],
+        pitchSpan: 48,
+        pitchCenterOffset: 12.7
+      }]
+    });
+
+    expect(hydrated.layers[0]).toMatchObject({
+      pitchSpan: 36,
+      pitchCenterOffset: 13
     });
   });
 
