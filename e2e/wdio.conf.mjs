@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 import { appDataDir, createFixtureMedia, ensureDesktopBinary, repoRoot, resetDesktopState } from './helpers.mjs';
 
 const EXTERNAL_MEDIA_TIMEOUT_MS = process.env.PITCHVIEW_E2E_MEDIA_PATHS ? 720000 : 180000;
+const TAURI_DRIVER_PORT = Number.parseInt(process.env.PITCHVIEW_E2E_DRIVER_PORT ?? '4444', 10);
+const TAURI_NATIVE_DRIVER_PORT = Number.parseInt(process.env.PITCHVIEW_E2E_NATIVE_PORT ?? '4445', 10);
 
 let tauriDriver;
 let isDriverShutdownExpected = false;
@@ -31,7 +33,7 @@ registerShutdown(() => {
 export const config = {
   runner: 'local',
   hostname: '127.0.0.1',
-  port: 4444,
+  port: TAURI_DRIVER_PORT,
   specs: [path.join(repoRoot, 'e2e', 'specs', '**', '*.e2e.mjs')],
   maxInstances: 1,
   logLevel: 'info',
@@ -61,7 +63,10 @@ export const config = {
   beforeSession() {
     const driverName = process.platform === 'win32' ? 'tauri-driver.exe' : 'tauri-driver';
     const driverPath = path.resolve(os.homedir(), '.cargo', 'bin', driverName);
-    const tauriDriverArgs = [];
+    const tauriDriverArgs = [
+      '--port', String(TAURI_DRIVER_PORT),
+      '--native-port', String(TAURI_NATIVE_DRIVER_PORT)
+    ];
 
     if (process.env.PITCHVIEW_E2E_NATIVE_DRIVER) {
       tauriDriverArgs.push('--native-driver', process.env.PITCHVIEW_E2E_NATIVE_DRIVER);

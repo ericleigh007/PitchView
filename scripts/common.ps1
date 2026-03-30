@@ -18,6 +18,32 @@ function Get-PitchViewDesktopBinaryPath {
   return Join-Path (Get-PitchViewRepoRoot) "app/desktop/src-tauri/target/debug/pitchview-desktop.exe"
 }
 
+function Get-PitchViewFreeTcpPort {
+  $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+  try {
+    $listener.Start()
+    return $listener.LocalEndpoint.Port
+  }
+  finally {
+    $listener.Stop()
+  }
+}
+
+function Set-PitchViewE2EDriverPorts {
+  do {
+    $driverPort = Get-PitchViewFreeTcpPort
+    $nativePort = Get-PitchViewFreeTcpPort
+  } while ($driverPort -eq $nativePort)
+
+  $env:PITCHVIEW_E2E_DRIVER_PORT = [string]$driverPort
+  $env:PITCHVIEW_E2E_NATIVE_PORT = [string]$nativePort
+
+  return [pscustomobject]@{
+    DriverPort = $driverPort
+    NativePort = $nativePort
+  }
+}
+
 function Get-PitchViewEdgeVersion {
   $edgePaths = @(
     "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
