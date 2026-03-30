@@ -2451,14 +2451,25 @@ function App() {
                               <span className="timeline-playhead media-playhead" style={{ left: `${playheadPercent}%` }} />
                             </div>
                           </div>
-                          <div className="media-envelope-shell">
-                            <svg className="amplitude-strip media-envelope-strip" viewBox={`0 0 ${viewportWidth} 44`} preserveAspectRatio="none">
-                              {amplitudePath ? <path d={amplitudePath} style={{ fill: amplitudeFillColor, stroke: amplitudeStrokeColor }} /> : null}
-                            </svg>
-                            <span className="timeline-playhead media-envelope-playhead" style={{ left: `${playheadPercent}%` }} />
-                          </div>
-                          <div className="player-transport-shell" onClick={(event) => event.stopPropagation()}>
-                            <div className="layer-transport-actions player-transport-actions">
+                          <div className="player-footer-shell">
+                            <div className="media-envelope-shell-row">
+                              <div
+                                className="media-envelope-shell"
+                                data-testid={`media-envelope-shell-${layer.id}`}
+                                style={{
+                                  width: contourViewportWidth,
+                                  borderColor: `rgba(239, 244, 239, ${(0.12 * layer.opacity).toFixed(3)})`
+                                }}
+                              >
+                                <div className="media-envelope-plane" aria-hidden="true" style={mediaPlaneStyle} />
+                                <svg className="amplitude-strip media-envelope-strip" viewBox={`0 0 ${viewportWidth} 44`} preserveAspectRatio="none">
+                                  {amplitudePath ? <path d={amplitudePath} style={{ fill: amplitudeFillColor, stroke: amplitudeStrokeColor }} /> : null}
+                                </svg>
+                                <span className="timeline-playhead media-envelope-playhead" style={{ left: `${playheadPercent}%` }} />
+                              </div>
+                            </div>
+                            <div className="player-transport-shell" onClick={(event) => event.stopPropagation()}>
+                              <div className="layer-transport-actions player-transport-actions">
                               <IconButton
                                 icon="seekBack"
                                 label={`Seek ${layer.name} backward 2 seconds`}
@@ -2493,16 +2504,17 @@ function App() {
                                   handleStop(layer.id);
                                 }}
                               />
-                              <IconButton
-                                icon="seekForward"
-                                label={`Seek ${layer.name} forward 2 seconds`}
-                                className="mini-icon-button player-transport-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setProject((current) => selectLayer(current, layer.id));
-                                  handleSeek(2, layer.id);
-                                }}
-                              />
+                                <IconButton
+                                  icon="seekForward"
+                                  label={`Seek ${layer.name} forward 2 seconds`}
+                                  className="mini-icon-button player-transport-button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setProject((current) => selectLayer(current, layer.id));
+                                    handleSeek(2, layer.id);
+                                  }}
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>

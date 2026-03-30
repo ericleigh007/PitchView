@@ -612,6 +612,7 @@ describe("App desktop regressions", () => {
     project.layers[0] = {
       ...project.layers[0],
       width: 360,
+      opacity: 0,
       duration: 40,
       pitchContour: [220, 460, 0, 225, 470, 0, 223, 468],
       pitchConfidence: [0.95, 0.18, 0.1, 0.93, 0.22, 0.1, 0.94, 0.2],
@@ -623,15 +624,29 @@ describe("App desktop regressions", () => {
     const { container } = render(<App />);
 
     const contourViewport = container.querySelector(".pitch-overlay-viewport") as HTMLDivElement | null;
+    const footerShell = container.querySelector(".player-footer-shell") as HTMLDivElement | null;
+    const transportShell = container.querySelector(".player-transport-shell") as HTMLDivElement | null;
     const envelopeShell = container.querySelector(".media-envelope-shell") as HTMLDivElement | null;
+    const envelopePlane = container.querySelector(".media-envelope-plane") as HTMLDivElement | null;
     const envelopeStrip = container.querySelector(".media-envelope-strip") as SVGElement | null;
     const mediaMain = await screen.findByTestId("media-main-layer-1");
     const envelopeViewBox = envelopeStrip?.getAttribute("viewBox")?.split(" ") ?? [];
     const envelopeWidth = Number(envelopeViewBox[2] ?? "0");
     expect(contourViewport).toBeTruthy();
+    expect(footerShell).toBeTruthy();
+    expect(transportShell).toBeTruthy();
     expect(envelopeShell).toBeTruthy();
+    expect(envelopePlane).toBeTruthy();
     expect(envelopeWidth).toBeGreaterThan(0);
     expect(envelopeWidth).toBeLessThanOrEqual(Number.parseInt(mediaMain.style.width, 10));
+    const footerShellStyle = getComputedStyle(footerShell as HTMLDivElement);
+    const envelopeShellStyle = getComputedStyle(envelopeShell as HTMLDivElement);
+    const envelopePlaneStyle = getComputedStyle(envelopePlane as HTMLDivElement);
+    expect(footerShellStyle.backgroundImage || "none").toBe("none");
+    expect(transportShell?.className).toContain("player-transport-shell");
+    expect(envelopeShellStyle.borderTopColor).toBe("rgba(239, 244, 239, 0)");
+    expect(envelopePlaneStyle.opacity).toBe("0");
+    expect(envelopePlaneStyle.backgroundColor).toBe("rgba(0, 0, 0, 0)");
     expect(screen.queryByLabelText("Contour pan")).toBeNull();
     expect(screen.queryByLabelText("Envelope pan")).toBeNull();
     expect(screen.queryByText(/Desktop analysis generated from original audio/i)).toBeNull();

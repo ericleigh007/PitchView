@@ -936,26 +936,52 @@ p {
   pointer-events: none;
 }
 
+.player-footer-shell {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  background: transparent;
+}
+
+.media-envelope-shell-row {
+  display: flex;
+  justify-content: center;
+}
+
 .media-envelope-shell {
   position: relative;
+  max-inline-size: 100%;
   block-size: 44px;
-  border-top: 1px solid rgba(239, 244, 239, 0.08);
-  background: linear-gradient(180deg, rgba(16, 33, 31, 0.9), rgba(7, 16, 15, 0.95));
+  overflow: hidden;
+  border: 1px solid rgba(239, 244, 239, 0.12);
+  border-radius: 12px;
+  background: transparent;
+}
+
+.media-envelope-plane {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, background 160ms ease;
 }
 
 .player-transport-shell {
   display: flex;
   justify-content: center;
-  padding-top: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(239, 244, 239, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(25, 69, 63, 0.94), rgba(9, 26, 23, 0.96));
 }
 
 .player-transport-actions {
   width: 100%;
   justify-content: center;
   gap: 0.42rem;
-  padding: 0.35rem 0.45rem;
-  border-color: rgba(239, 244, 239, 0.12);
-  background: rgba(4, 12, 11, 0.58);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
 }
 
 .player-transport-button {
@@ -964,11 +990,14 @@ p {
 }
 
 .media-envelope-strip {
+  position: relative;
+  z-index: 1;
   block-size: 44px;
 }
 
 .media-envelope-playhead {
   top: 0;
+  z-index: 2;
 }
 
 .pitch-point-marker {
