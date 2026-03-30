@@ -14,6 +14,92 @@ function Get-PitchViewVenvPythonPath {
   return Join-Path (Get-PitchViewRepoRoot) ".venv/Scripts/python.exe"
 }
 
+function Get-PitchViewDesktopBinaryPath {
+  return Join-Path (Get-PitchViewRepoRoot) "app/desktop/src-tauri/target/debug/pitchview-desktop.exe"
+}
+
+function Get-PitchViewEdgeVersion {
+  $edgePaths = @(
+    "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+  )
+
+  foreach ($edgePath in $edgePaths) {
+    if (Test-Path $edgePath) {
+      return (Get-Item $edgePath).VersionInfo.ProductVersion
+    }
+  }
+
+  throw "Microsoft Edge is required for Tauri WebDriver automation on Windows."
+}
+
+function Ensure-PitchViewTauriDriver {
+  $driverPath = Join-Path $HOME ".cargo\bin\tauri-driver.exe"
+  if (-not (Test-Path $driverPath)) {
+    Write-Host "[PitchView] Installing tauri-driver"
+    cargo install tauri-driver --locked
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to install tauri-driver."
+    }
+  }
+
+  return $driverPath
+}
+
+function Find-PitchViewEdgeDriver {
+  $repoRoot = Get-PitchViewRepoRoot
+  $driverRoot = Join-Path $repoRoot ".tmp/gui-e2e/msedgedriver"
+  $nestedDriver = Get-ChildItem -Path $driverRoot -Recurse -Filter "msedgedriver.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($nestedDriver) {
+    return $nestedDriver.FullName
+  }
+
+  $repoRootDriver = Join-Path $repoRoot "msedgedriver.exe"
+  if (Test-Path $repoRootDriver) {
+    New-Item -ItemType Directory -Path $driverRoot -Force | Out-Null
+    $normalizedDriverPath = Join-Path $driverRoot "msedgedriver.exe"
+    Copy-Item $repoRootDriver $normalizedDriverPath -Force
+    return $normalizedDriverPath
+  }
+
+  return $null
+}
+
+function Ensure-PitchViewEdgeDriver {
+  $edgeVersion = Get-PitchViewEdgeVersion
+  $driverRoot = Join-Path (Get-PitchViewRepoRoot) ".tmp/gui-e2e/msedgedriver"
+  $driverTool = Join-Path $HOME ".cargo\bin\msedgedriver-tool.exe"
+  $existingDriver = Find-PitchViewEdgeDriver
+
+  if ($existingDriver) {
+    return $existingDriver
+  }
+
+  Remove-Item $driverRoot -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path $driverRoot -Force | Out-Null
+
+  if (-not (Test-Path $driverTool)) {
+    Write-Host "[PitchView] Installing msedgedriver-tool"
+    cargo install --git https://github.com/chippers/msedgedriver-tool --locked
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to install msedgedriver-tool."
+    }
+  }
+
+  Write-Host "[PitchView] Downloading Edge WebDriver $edgeVersion via msedgedriver-tool"
+  & $driverTool --output-dir $driverRoot
+  if ($LASTEXITCODE -ne 0) {
+    throw "Edge WebDriver download failed for Edge $edgeVersion."
+  }
+
+  $downloadedDriver = Find-PitchViewEdgeDriver
+  if (-not $downloadedDriver) {
+    throw "Edge WebDriver download did not produce msedgedriver.exe under $driverRoot or the repo root."
+  }
+
+  return $downloadedDriver
+}
+
 function Find-PitchViewBinary {
   param(
     [Parameter(Mandatory)]

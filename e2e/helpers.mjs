@@ -148,7 +148,7 @@ export function createFixtureMedia() {
 
 export function ensureDesktopBinary() {
   if (!fs.existsSync(desktopBinaryPath)) {
-    throw new Error(`Desktop binary not found at ${desktopBinaryPath}. Run ./scripts/build.ps1 first.`);
+    throw new Error(`Desktop binary not found at ${desktopBinaryPath}. Run ./scripts/build.ps1 -BuildDesktopBinary, ./scripts/gui-test.ps1, or ./scripts/capture-readme-screenshots.ps1 first.`);
   }
 
   return desktopBinaryPath;

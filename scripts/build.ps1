@@ -1,5 +1,6 @@
 param(
-  [switch]$RunTests
+  [switch]$RunTests,
+  [switch]$BuildDesktopBinary
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,9 +12,20 @@ Initialize-PitchViewEnvironment -RequireCargo -RequirePython
 Write-Host "[PitchView] Building frontend"
 npm --workspace app/frontend run build
 
-Write-Host "[PitchView] Checking desktop host"
+if ($BuildDesktopBinary) {
+  Write-Host "[PitchView] Building desktop host"
+}
+else {
+  Write-Host "[PitchView] Checking desktop host"
+}
+
 Push-Location app/desktop/src-tauri
-cargo check
+if ($BuildDesktopBinary) {
+  cargo build
+}
+else {
+  cargo check
+}
 Pop-Location
 
 if ($RunTests) {
