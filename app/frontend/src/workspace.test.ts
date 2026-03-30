@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   addLayer,
   assignImportedMedia,
+  bringLayerToFront,
   createDefaultProject,
   getImportTargetLayerIds,
   moveLayer,
@@ -49,6 +50,15 @@ describe("workspace model", () => {
     const ordered = moved.layers.slice().sort((left, right) => left.zIndex - right.zIndex);
 
     expect(ordered[1].id).toBe("layer-1");
+  });
+
+  test("brings a layer to the front while preserving relative order for the others", () => {
+    const project = createDefaultProject();
+    const reordered = bringLayerToFront(project, "layer-2");
+    const ordered = reordered.layers.slice().sort((left, right) => left.zIndex - right.zIndex);
+
+    expect(ordered.at(-1)?.id).toBe("layer-2");
+    expect(ordered.slice(0, 3).map((layer) => layer.id)).toEqual(["layer-1", "layer-3", "layer-4"]);
   });
 
   test("targets synced or all layers during import", () => {

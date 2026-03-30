@@ -1,4 +1,4 @@
-import { type CSSProperties, type ChangeEvent, type MouseEvent, type SyntheticEvent, type UIEvent as ReactUIEvent, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent, type UIEvent as ReactUIEvent, useEffect, useRef, useState } from "react";
 import "./index.css";
 import { analyzeAudioFile } from "./analysis";
 import { createDemoProject } from "./demo";
@@ -21,6 +21,7 @@ import {
   addLayer,
   assignImportedMedia,
   assignImportedMediaToLayerIds,
+  bringLayerToFront,
   getImportTargetLayerIds,
   getPlaybackTargetLayerIds,
   hydrateProject,
@@ -46,6 +47,8 @@ const LAYER_MENU_WIDTH_PX = 288;
 const LAYER_MENU_DOCK_GAP_PX = 12;
 const PLAYER_TIMELINE_WINDOW_SECONDS = 8;
 const PITCH_PLOT_HEIGHT = 84;
+const MIN_LAYER_WIDTH = 240;
+const MIN_LAYER_HEIGHT = 320;
 
 const STEM_MODEL_OUTPUT_COUNTS: Record<string, number> = {
   "Vocals Mel-Band Roformer": 2,
@@ -578,6 +581,17 @@ type PendingSourceSync = {
   mediaSourceUrl: string | null;
 };
 
+type StageInteraction = {
+  mode: "drag" | "resize";
+  layerId: string;
+  startClientX: number;
+  startClientY: number;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+};
+
 const DIAGNOSTICS_SCROLL_THRESHOLD = 24;
 
 function shouldStickDiagnosticsToBottom(element: HTMLElement): boolean {
@@ -929,6 +943,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState("Browser and Tauri share the same workspace UI. Import uses the native system picker.");
   const [openMenuLayerId, setOpenMenuLayerId] = useState<string | null>(null);
   const [hoveredPitchPoint, setHoveredPitchPoint] = useState<HoveredPitchPoint | null>(null);
+  const [stageInteraction, setStageInteraction] = useState<StageInteraction | null>(null);
   const mediaRefs = useRef<Record<string, LayerMediaRefs>>({});
   const diagnosticsLogRef = useRef<HTMLPreElement | null>(null);
   const diagnosticsAutoScrollRef = useRef(true);
@@ -1214,8 +1229,116 @@ function App() {
     });
   }, [project.layers]);
 
+  useEffect(() => {
+    if (!stageInteraction) {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = stageInteraction.mode === "drag" ? "grabbing" : "nwse-resize";
+
+    const handlePointerMove = (event: PointerEvent) => {
+      setProject((current) => {
+        const layer = current.layers.find((entry) => entry.id === stageInteraction.layerId);
+        if (!layer) {
+          return current;
+        }
+
+        const deltaX = event.clientX - stageInteraction.startClientX;
+        const deltaY = event.clientY - stageInteraction.startClientY;
+
+        if (stageInteraction.mode === "drag") {
+          const nextX = clamp(stageInteraction.startX + deltaX, 0, Math.max(0, STAGE_WIDTH - stageInteraction.startWidth));
+          const nextY = clamp(stageInteraction.startY + deltaY, 0, Math.max(0, STAGE_HEIGHT - stageInteraction.startHeight));
+
+          if (nextX === layer.x && nextY === layer.y) {
+            return current;
+          }
+
+          return updateLayer(current, layer.id, { x: nextX, y: nextY });
+        }
+
+        const nextWidth = clamp(stageInteraction.startWidth + deltaX, MIN_LAYER_WIDTH, Math.max(MIN_LAYER_WIDTH, STAGE_WIDTH - stageInteraction.startX));
+        const nextHeight = clamp(stageInteraction.startHeight + deltaY, MIN_LAYER_HEIGHT, Math.max(MIN_LAYER_HEIGHT, STAGE_HEIGHT - stageInteraction.startY));
+
+        if (nextWidth === layer.width && nextHeight === layer.height) {
+          return current;
+        }
+
+        return updateLayer(current, layer.id, { width: nextWidth, height: nextHeight });
+      });
+    };
+
+    const handlePointerStop = () => {
+      setStageInteraction(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerStop);
+    window.addEventListener("pointercancel", handlePointerStop);
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerStop);
+      window.removeEventListener("pointercancel", handlePointerStop);
+    };
+  }, [stageInteraction]);
+
   function patchLayer(layerId: string, patch: Partial<PlayerLayer>) {
     setProject((current) => updateLayer(current, layerId, patch));
+  }
+
+  function focusLayer(layerId: string, shouldBringToFront = false) {
+    setProject((current) => {
+      const selectedProject = selectLayer(current, layerId);
+      return shouldBringToFront ? bringLayerToFront(selectedProject, layerId) : selectedProject;
+    });
+  }
+
+  function handleLayerDragStart(event: ReactPointerEvent<HTMLDivElement>, layer: PlayerLayer) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setHoveredPitchPoint((current) => current?.layerId === layer.id ? null : current);
+    focusLayer(layer.id, true);
+    setStageInteraction({
+      mode: "drag",
+      layerId: layer.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: layer.x,
+      startY: layer.y,
+      startWidth: layer.width,
+      startHeight: layer.height
+    });
+  }
+
+  function handleLayerResizeStart(event: ReactPointerEvent<HTMLButtonElement>, layer: PlayerLayer) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setHoveredPitchPoint((current) => current?.layerId === layer.id ? null : current);
+    focusLayer(layer.id, true);
+    setStageInteraction({
+      mode: "resize",
+      layerId: layer.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: layer.x,
+      startY: layer.y,
+      startWidth: layer.width,
+      startHeight: layer.height
+    });
   }
 
   function setMediaElement(layerId: string, channel: keyof LayerMediaRefs, element: HTMLMediaElement | null) {
@@ -1813,19 +1936,21 @@ function App() {
                 const pitchPoints = buildPitchPoints(layer, viewportWidth, 84, timeViewport.startTime, timeViewport.endTime);
                 const playheadPercent = getPitchPlotLeftPercent(viewportWidth, timeViewport.startTime, timeViewport.endTime, timeViewport.playheadTime);
                 const timelineTicks = buildTimelineTicks(timeViewport.startTime, timeViewport.endTime);
-                const contourLineOpacity = clamp(layer.pitchContourIntensity * 0.95, 0.16, 1);
-                const contourProgressOpacity = clamp(layer.pitchContourIntensity * 1.1, 0.24, 1);
+                const contourLineOpacity = clamp(0.16 + layer.pitchContourIntensity * 0.56, 0.16, 1);
+                const contourProgressOpacity = clamp(0.24 + layer.pitchContourIntensity * 0.68, 0.24, 1);
                 const contourWidth = clamp(layer.pitchContourWidth, 0.15, 1.8);
                 const contourProgressWidth = clamp(layer.pitchContourWidth + 0.12, 0.2, 2);
                 const contourStrokeColor = hexToRgba(layer.pitchContourColor, contourLineOpacity);
                 const contourProgressColor = hexToRgba(layer.pitchContourColor, contourProgressOpacity);
-                const amplitudeFillColor = hexToRgba(layer.pitchContourColor, Math.max(0.14, contourLineOpacity * 0.38));
-                const amplitudeStrokeColor = hexToRgba(layer.pitchContourColor, Math.max(0.7, contourProgressOpacity * 0.9));
+                const amplitudeFillColor = hexToRgba(layer.pitchContourColor, clamp(0.08 + layer.pitchContourIntensity * 0.32, 0.08, 0.92));
+                const amplitudeStrokeColor = hexToRgba(layer.pitchContourColor, clamp(0.42 + layer.pitchContourIntensity * 0.42, 0.42, 1));
                 const contourViewportWidth = viewportWidth;
                 const pitchScaleLabels = getPitchScaleLabels(layer);
                 const selectedStemLabel = getSelectedStemLabel(layer);
                 const effectiveZIndex = openMenuLayerId === layer.id ? topLayerZIndex : layer.zIndex;
                 const activePitchTooltip = hoveredPitchPoint?.layerId === layer.id ? hoveredPitchPoint : null;
+                const isDraggingLayer = stageInteraction?.layerId === layer.id && stageInteraction.mode === "drag";
+                const isResizingLayer = stageInteraction?.layerId === layer.id && stageInteraction.mode === "resize";
 
                 const layerCardStyle: CSSProperties & Record<"--layer-opacity", string> = {
                   left: layer.x,
@@ -1835,15 +1960,29 @@ function App() {
                   zIndex: effectiveZIndex,
                   "--layer-opacity": layer.opacity.toString()
                 };
+                const mediaPlaneStyle: CSSProperties = {
+                  opacity: layer.opacity,
+                  background: `rgba(0, 0, 0, ${layer.opacity.toFixed(3)})`
+                };
 
                 return (
                   <div
                     key={layer.id}
-                    className={layer.id === project.selectedLayerId ? "layer-card layer-card-selected" : "layer-card"}
+                    data-testid={`layer-card-${layer.id}`}
+                    className={[
+                      "layer-card",
+                      layer.id === project.selectedLayerId ? "layer-card-selected" : "",
+                      isDraggingLayer ? "layer-card-dragging" : "",
+                      isResizingLayer ? "layer-card-resizing" : ""
+                    ].filter(Boolean).join(" ")}
                     style={layerCardStyle}
-                    onClick={() => setProject((current) => selectLayer(current, layer.id))}
+                    onClick={() => focusLayer(layer.id)}
                   >
-                    <div className="layer-card-header">
+                    <div
+                      className="layer-card-header"
+                      data-testid={`layer-header-${layer.id}`}
+                      onPointerDown={(event) => handleLayerDragStart(event, layer)}
+                    >
                       <div>
                         <strong>{layer.name}</strong>
                         <span className="layer-mode-copy">{layer.syncLocked ? "Synced" : "Free"}</span>
@@ -1882,6 +2021,18 @@ function App() {
                         />
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      className="layer-resize-handle"
+                      data-testid={`layer-resize-${layer.id}`}
+                      aria-label={`Resize ${layer.name}`}
+                      title={`Resize ${layer.name}`}
+                      onPointerDown={(event) => handleLayerResizeStart(event, layer)}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <span className="layer-resize-handle-lines" aria-hidden="true" />
+                    </button>
 
                     {openMenuLayerId === layer.id ? (
                       <div
@@ -1993,7 +2144,7 @@ function App() {
                             <span>Opacity</span>
                             <input
                               type="range"
-                              min="0.2"
+                              min="0"
                               max="1"
                               step="0.05"
                               value={layer.opacity}
@@ -2042,7 +2193,7 @@ function App() {
                             <input
                               type="range"
                               min="0.15"
-                              max="1.35"
+                              max="2.5"
                               step="0.05"
                               value={layer.pitchContourIntensity}
                               onChange={(event) => patchLayer(layer.id, { pitchContourIntensity: Number(event.target.value) })}
@@ -2087,7 +2238,7 @@ function App() {
                       </div>
                     ) : null}
 
-                    <div className="layer-display">
+                    <div className="layer-display" data-testid={`layer-display-${layer.id}`}>
                       <div className="media-shell">
                         <div className="media-main" style={{ width: contourViewportWidth }} data-testid={`media-main-${layer.id}`}>
                           <div className="layer-hover-meta" aria-hidden="true">
@@ -2115,13 +2266,12 @@ function App() {
                             </aside>
 
                           {layer.mediaKind === "video" && layer.mediaSourceUrl ? (
-                            <>
+                            <div className="media-content-plane" data-testid={`media-content-${layer.id}`} style={mediaPlaneStyle}>
                               <video
                                 key={`visual-${layer.id}-${layer.displaySourceUrl ?? layer.mediaSourceUrl ?? "none"}`}
                                 ref={(element) => setMediaElement(layer.id, "visual", element)}
                                 className="media-preview"
                                 src={layer.displaySourceUrl ?? layer.mediaSourceUrl}
-                                style={{ opacity: layer.opacity }}
                                 preload="auto"
                                 playsInline
                                 muted
@@ -2143,9 +2293,9 @@ function App() {
                                 onPlay={() => setProject((current) => updateLayer(current, layer.id, { isPlaying: true }))}
                                 onPause={() => setProject((current) => updateLayer(current, layer.id, { isPlaying: false }))}
                               />
-                            </>
+                            </div>
                           ) : layer.mediaSourceUrl ? (
-                            <>
+                            <div className="media-content-plane" data-testid={`media-content-${layer.id}`} style={mediaPlaneStyle}>
                               <audio
                                 key={`audio-${layer.id}-${layer.mediaSourceUrl ?? "none"}`}
                                 ref={(element) => setMediaElement(layer.id, "audio", element)}
@@ -2161,8 +2311,8 @@ function App() {
                                 onPlay={() => setProject((current) => updateLayer(current, layer.id, { isPlaying: true }))}
                                 onPause={() => setProject((current) => updateLayer(current, layer.id, { isPlaying: false }))}
                               />
-                              <div className="audio-placeholder" style={{ opacity: layer.opacity }}>Audio loaded</div>
-                            </>
+                              <div className="audio-placeholder">Audio loaded</div>
+                            </div>
                           ) : (
                             <div className="audio-placeholder">No media loaded</div>
                           )}

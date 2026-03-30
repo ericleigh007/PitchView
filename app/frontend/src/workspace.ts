@@ -342,6 +342,26 @@ export function removeSelectedLayer(project: WorkspaceProject): WorkspaceProject
   return removeLayer(project, project.selectedLayerId);
 }
 
+export function bringLayerToFront(project: WorkspaceProject, layerId: string): WorkspaceProject {
+  const layers = [...project.layers].sort((left, right) => left.zIndex - right.zIndex);
+  const index = layers.findIndex((layer) => layer.id === layerId);
+
+  if (index < 0 || index === layers.length - 1) {
+    return project;
+  }
+
+  const [layer] = layers.splice(index, 1);
+  layers.push(layer);
+
+  return {
+    ...project,
+    layers: layers.map((entry, currentIndex) => ({
+      ...entry,
+      zIndex: currentIndex + 1
+    }))
+  };
+}
+
 export function moveLayer(project: WorkspaceProject, layerId: string, direction: "forward" | "backward"): WorkspaceProject {
   const layers = [...project.layers].sort((left, right) => left.zIndex - right.zIndex);
   const index = layers.findIndex((layer) => layer.id === layerId);

@@ -906,7 +906,7 @@ describe("App desktop regressions", () => {
       availableSources: [
         { kind: "original", label: "Original", path: "C:/cache/playback.wav", url: "file://C:/cache/playback.wav" }
       ],
-      opacity: 0.2,
+      opacity: 0,
       duration: 10,
       pitchContour: [220, 222, 224, 226],
       pitchConfidence: [0.95, 0.95, 0.95, 0.95],
@@ -922,11 +922,19 @@ describe("App desktop regressions", () => {
       expect(element).toBeTruthy();
       return element as HTMLVideoElement;
     });
+    const layerCard = await screen.findByTestId("layer-card-layer-1");
+    const layerDisplay = await screen.findByTestId("layer-display-layer-1");
+    const mediaContent = await screen.findByTestId("media-content-layer-1");
 
     await waitFor(() => {
       const pitchPath = container.querySelector(".pitch-overlay-line") as SVGPathElement | null;
+      const amplitudePath = container.querySelector(".amplitude-strip path") as SVGPathElement | null;
       expect(pitchPath?.getAttribute("d")).toBeTruthy();
-      expect(videoElement.style.opacity).toBe("0.2");
+      expect(amplitudePath?.getAttribute("d")).toBeTruthy();
+      expect(layerDisplay.style.opacity).toBe("");
+      expect(layerCard.style.getPropertyValue("--layer-opacity")).toBe("0");
+      expect(mediaContent.style.opacity).toBe("0");
+      expect(videoElement.style.opacity).toBe("");
       expect(pitchPath?.style.opacity).toBe("");
     });
   });
@@ -1033,7 +1041,7 @@ describe("App desktop regressions", () => {
 
     fireEvent.change(screen.getByLabelText("Contour color"), { target: { value: "#ff8844" } });
     fireEvent.change(screen.getByLabelText("Contour width"), { target: { value: "1.8" } });
-    fireEvent.change(screen.getByLabelText("Contour intensity"), { target: { value: "1.35" } });
+    fireEvent.change(screen.getByLabelText("Contour intensity"), { target: { value: "2.5" } });
 
     await waitFor(() => {
       const contourPath = container.querySelector(".pitch-overlay-line") as SVGPathElement | null;
@@ -1043,8 +1051,8 @@ describe("App desktop regressions", () => {
       expect(contourPath?.style.strokeWidth).toBe("1.8");
       expect(progressPath?.style.stroke).toBe("rgba(255, 136, 68, 1)");
       expect(progressPath?.style.strokeWidth).toBe("1.92");
-      expect(amplitudePath?.style.fill).toBe("rgba(255, 136, 68, 0.38)");
-      expect(amplitudePath?.style.stroke).toBe("rgba(255, 136, 68, 0.9)");
+      expect(amplitudePath?.style.fill).toBe("rgba(255, 136, 68, 0.88)");
+      expect(amplitudePath?.style.stroke).toBe("rgba(255, 136, 68, 1)");
     });
   });
 
@@ -1392,5 +1400,71 @@ describe("App desktop regressions", () => {
       expect(audioElement?.getAttribute("src")).toContain("playback.wav");
       expect(videoElement).toBeNull();
     });
+  });
+
+  test("drags a player by its header and persists the new stage position", async () => {
+    desktopMocks.loadDesktopProject.mockResolvedValue(createSingleLayerProject());
+
+    render(<App />);
+
+    const card = await screen.findByTestId("layer-card-layer-1");
+    const header = screen.getByTestId("layer-header-layer-1");
+    const initialLeft = Number.parseFloat(card.style.left);
+    const initialTop = Number.parseFloat(card.style.top);
+
+    fireEvent.pointerDown(header, { button: 0, clientX: 120, clientY: 120 });
+    fireEvent.pointerMove(window, { clientX: 220, clientY: 190 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(Number.parseFloat(card.style.left)).toBeGreaterThan(initialLeft);
+      expect(Number.parseFloat(card.style.top)).toBeGreaterThan(initialTop);
+    });
+  });
+
+  test("resizes a player from the corner handle", async () => {
+    desktopMocks.loadDesktopProject.mockResolvedValue(createSingleLayerProject());
+
+    render(<App />);
+
+    const card = await screen.findByTestId("layer-card-layer-1");
+    const handle = screen.getByTestId("layer-resize-layer-1");
+    const initialWidth = Number.parseFloat(card.style.width);
+    const initialHeight = Number.parseFloat(card.style.height);
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 360, clientY: 520 });
+    fireEvent.pointerMove(window, { clientX: 480, clientY: 610 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(Number.parseFloat(card.style.width)).toBeGreaterThan(initialWidth);
+      expect(Number.parseFloat(card.style.height)).toBeGreaterThan(initialHeight);
+    });
+  });
+
+  test("brings an interacted overlapping player in front so overlays remain usable", async () => {
+    const project = createDefaultProject();
+    project.layers[0] = {
+      ...project.layers[0],
+      x: project.layers[3].x,
+      y: project.layers[3].y
+    };
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    render(<App />);
+
+    const card1 = await screen.findByTestId("layer-card-layer-1");
+    const card4 = screen.getByTestId("layer-card-layer-4");
+    const header1 = screen.getByTestId("layer-header-layer-1");
+
+    expect(Number(card1.style.zIndex)).toBeLessThan(Number(card4.style.zIndex));
+
+    fireEvent.pointerDown(header1, { button: 0, clientX: 300, clientY: 120 });
+
+    await waitFor(() => {
+      expect(Number(card1.style.zIndex)).toBeGreaterThan(Number(card4.style.zIndex));
+    });
+
+    fireEvent.pointerUp(window);
   });
 });

@@ -442,7 +442,7 @@ p {
   border-radius: 18px;
   padding: 1rem;
   color: inherit;
-  background: linear-gradient(180deg, rgba(25, 69, 63, 0.94), rgba(9, 26, 23, 0.96));
+  background: transparent;
 }
 
 .layer-remove-button {
@@ -479,7 +479,17 @@ p {
 }
 
 .layer-card-header {
+  display: flex;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(239, 244, 239, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(25, 69, 63, 0.94), rgba(9, 26, 23, 0.96));
 }
 
 .layer-card-header > :first-child {
@@ -488,6 +498,45 @@ p {
 
 .layer-card-header strong {
   display: block;
+}
+
+.layer-card-dragging,
+.layer-card-resizing {
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.34);
+}
+
+.layer-card-dragging .layer-card-header {
+  cursor: grabbing;
+}
+
+.layer-resize-handle {
+  position: absolute;
+  right: 0.55rem;
+  bottom: 0.55rem;
+  z-index: 6;
+  inline-size: 1.2rem;
+  block-size: 1.2rem;
+  padding: 0;
+  border: 1px solid rgba(239, 244, 239, 0.18);
+  border-radius: 0.45rem;
+  background: rgba(4, 12, 11, 0.72);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.layer-resize-handle:hover {
+  border-color: rgba(214, 255, 107, 0.42);
+}
+
+.layer-resize-handle-lines {
+  position: absolute;
+  right: 0.18rem;
+  bottom: 0.18rem;
+  inline-size: 0.56rem;
+  block-size: 0.56rem;
+  background:
+    linear-gradient(135deg, transparent 0 44%, rgba(239, 244, 239, 0.95) 44% 52%, transparent 52% 100%),
+    linear-gradient(135deg, transparent 0 18%, rgba(239, 244, 239, 0.78) 18% 26%, transparent 26% 100%);
 }
 
 .layer-mode-copy {
@@ -683,7 +732,7 @@ p {
   border-radius: 16px;
   overflow: hidden;
   border: 1px solid rgba(239, 244, 239, 0.12);
-  background: linear-gradient(180deg, rgba(4, 12, 11, 0.9), rgba(15, 40, 37, 0.75));
+  background: transparent;
 }
 
 .layer-note-scale {
@@ -770,13 +819,20 @@ p {
   min-width: 100%;
   border-radius: 12px;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(3, 10, 9, 0.95), rgba(8, 21, 19, 0.88));
+  background: transparent;
 }
 
 .media-visual-stage {
   position: relative;
   min-height: 0;
   overflow: hidden;
+}
+
+.media-content-plane {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  transition: opacity 160ms ease, background 160ms ease;
 }
 
 .media-preview,

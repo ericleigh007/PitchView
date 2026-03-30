@@ -81,6 +81,10 @@ Layer settings open on a demo player, showing source selection and analysis conf
 
 ![PitchView layer settings](docs/screenshots/pitchview-layer-settings.png)
 
+Overlapped players with media transparency enabled, showing direct visual and pitch-contour comparison on the shared stage:
+
+![PitchView overlapped comparison stage](docs/screenshots/overlay-test.png)
+
 To refresh the screenshots after UI changes, run:
 
 ```powershell

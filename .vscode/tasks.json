@@ -635,6 +635,94 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "frontend-tests-log",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm test --prefix app/frontend > .tmp\\frontend-test.log 2>&1"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }
