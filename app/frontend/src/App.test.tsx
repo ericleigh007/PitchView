@@ -74,6 +74,12 @@ function getPathStartX(pathData: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function getLayerElapsedTimeText(layerId: string): string | null {
+  const layerCard = screen.getByTestId(`layer-card-${layerId}`);
+  const timeLabels = Array.from(layerCard.querySelectorAll(".player-progress-time"), (element) => element.textContent);
+  return timeLabels[0] ?? null;
+}
+
 describe("App desktop regressions", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -270,6 +276,70 @@ describe("App desktop regressions", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Pause Player 1" })).toBeTruthy();
+    });
+  });
+
+  test("keeps solo and blend mix modes mapped to the correct muted players", async () => {
+    const project = createDefaultProject();
+    project.selectedLayerId = project.layers[0].id;
+    project.layers = project.layers.slice(0, 2).map((layer, index) => ({
+      ...layer,
+      mediaKind: "audio",
+      mediaLabel: `Player ${index + 1}`,
+      mediaSourceUrl: `file://C:/media/player-${index + 1}.wav`,
+      sourcePath: `C:/media/player-${index + 1}.wav`,
+      availableSources: [
+        { kind: "original", label: "Original", path: `C:/media/player-${index + 1}.wav`, url: `file://C:/media/player-${index + 1}.wav` }
+      ],
+      analysisState: "ready"
+    }));
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    const audioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      return elements;
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Mix mode for Player 1"), { target: { value: "solo" } });
+
+    await waitFor(() => {
+      expect(audioElements[0].muted).toBe(false);
+      expect(audioElements[1].muted).toBe(true);
+    });
+
+    fireEvent.change(screen.getByLabelText("Mix mode for Player 1"), { target: { value: "blend" } });
+
+    await waitFor(() => {
+      expect(audioElements[0].muted).toBe(false);
+      expect(audioElements[1].muted).toBe(false);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 2" }));
+    fireEvent.change(screen.getByLabelText("Mix mode for Player 2"), { target: { value: "solo" } });
+
+    await waitFor(() => {
+      expect(audioElements[0].muted).toBe(true);
+      expect(audioElements[1].muted).toBe(false);
+      expect((screen.getByLabelText("Mix mode for Player 2") as HTMLSelectElement).value).toBe("solo");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Mix mode for Player 1"), { target: { value: "solo" } });
+
+    await waitFor(() => {
+      expect(audioElements[0].muted).toBe(false);
+      expect(audioElements[1].muted).toBe(true);
+      expect((screen.getByLabelText("Mix mode for Player 1") as HTMLSelectElement).value).toBe("solo");
+    });
+
+      fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 2" }));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Mix mode for Player 2") as HTMLSelectElement).value).toBe("blend");
     });
   });
 
@@ -993,6 +1063,416 @@ describe("App desktop regressions", () => {
     });
   });
 
+  test("realigns sync-locked players before restarting after switching from vocals back to original", async () => {
+    const playMock = vi.fn().mockResolvedValue(undefined);
+    const pauseMock = vi.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: playMock
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: pauseMock
+    });
+
+    const project = createDefaultProject();
+    project.selectedLayerId = project.layers[0].id;
+    project.layers = project.layers.slice(0, 2).map((layer, index) => ({
+      ...layer,
+      mediaKind: "audio",
+      mediaLabel: index === 0 ? "Vocals stem" : `Player ${index + 1}`,
+      mediaSourceUrl: `file://C:/media/player-${index + 1}-vocals.wav`,
+      sourcePath: `C:/media/player-${index + 1}-vocals.wav`,
+      playbackPosition: 0,
+      duration: 120,
+      isPlaying: false,
+      syncLocked: true,
+      availableSources: [
+        { kind: "original", label: "Original", path: `C:/media/player-${index + 1}-original.wav`, url: `file://C:/media/player-${index + 1}-original.wav` },
+        { kind: "vocals", label: "Vocals stem", path: `C:/media/player-${index + 1}-vocals.wav`, url: `file://C:/media/player-${index + 1}-vocals.wav` }
+      ],
+      analysisState: "ready"
+    }));
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    const initialAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      return elements;
+    });
+
+    initialAudioElements.forEach((element) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: 0
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "original" } });
+
+    const switchedAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      expect(elements.some((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav"))).toBe(true);
+      return elements;
+    });
+
+    const originalAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav")) as HTMLAudioElement;
+    const otherAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-2-vocals.wav")) as HTMLAudioElement;
+
+    [originalAudioElement, otherAudioElement].forEach((element, index) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: index === 0 ? 0.25 : 0
+      });
+    });
+
+    await act(async () => {
+      fireEvent.loadedMetadata(originalAudioElement);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    await waitFor(() => {
+      expect(originalAudioElement.currentTime).toBe(0);
+      expect(otherAudioElement.currentTime).toBe(0);
+      expect(playMock).toHaveBeenCalled();
+    });
+  });
+
+  test("uses the selected sync clock when starting sync-locked players with drifted element times", async () => {
+    const playMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: playMock
+    });
+
+    const project = createDefaultProject();
+    project.selectedLayerId = project.layers[0].id;
+    project.layers = project.layers.slice(0, 2).map((layer, index) => ({
+      ...layer,
+      mediaKind: "audio",
+      mediaLabel: `Player ${index + 1}`,
+      mediaSourceUrl: `file://C:/media/player-${index + 1}.wav`,
+      sourcePath: `C:/media/player-${index + 1}.wav`,
+      playbackPosition: 23.5,
+      duration: 120,
+      isPlaying: false,
+      syncLocked: true,
+      availableSources: [
+        { kind: "original", label: "Original", path: `C:/media/player-${index + 1}.wav`, url: `file://C:/media/player-${index + 1}.wav` }
+      ],
+      analysisState: "ready"
+    }));
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    const audioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      return elements;
+    });
+
+    audioElements.forEach((element, index) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: index === 0 ? 23.5 : 23.75
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    await waitFor(() => {
+      expect(audioElements[0].currentTime).toBe(23.5);
+      expect(audioElements[1].currentTime).toBe(23.5);
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:23");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:23");
+      expect(playMock).toHaveBeenCalled();
+    });
+  });
+
+  test("keeps visible player timecodes aligned when sync-locked players restart after a source switch", async () => {
+    const playMock = vi.fn().mockResolvedValue(undefined);
+    const pauseMock = vi.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: playMock
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: pauseMock
+    });
+
+    const project = createDefaultProject();
+    project.selectedLayerId = project.layers[0].id;
+    project.layers = project.layers.slice(0, 2).map((layer, index) => ({
+      ...layer,
+      mediaKind: "audio",
+      mediaLabel: index === 0 ? "Vocals stem" : `Player ${index + 1}`,
+      mediaSourceUrl: `file://C:/media/player-${index + 1}-vocals.wav`,
+      sourcePath: `C:/media/player-${index + 1}-vocals.wav`,
+      playbackPosition: 0,
+      duration: 120,
+      isPlaying: false,
+      syncLocked: true,
+      availableSources: [
+        { kind: "original", label: "Original", path: `C:/media/player-${index + 1}-original.wav`, url: `file://C:/media/player-${index + 1}-original.wav` },
+        { kind: "vocals", label: "Vocals stem", path: `C:/media/player-${index + 1}-vocals.wav`, url: `file://C:/media/player-${index + 1}-vocals.wav` }
+      ],
+      analysisState: "ready"
+    }));
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    const initialAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      return elements;
+    });
+
+    initialAudioElements.forEach((element) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: 0
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "original" } });
+
+    const switchedAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      expect(elements.some((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav"))).toBe(true);
+      return elements;
+    });
+
+    const originalAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav")) as HTMLAudioElement;
+    const otherAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-2-vocals.wav")) as HTMLAudioElement;
+
+    [originalAudioElement, otherAudioElement].forEach((element) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: 0
+      });
+    });
+
+    await act(async () => {
+      fireEvent.loadedMetadata(originalAudioElement);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    originalAudioElement.currentTime = 8.25;
+    otherAudioElement.currentTime = 8;
+
+    await waitFor(() => {
+      expect(otherAudioElement.currentTime).toBe(8.25);
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:08");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:08");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop Player 1" }));
+
+    await waitFor(() => {
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:00");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:00");
+    });
+
+    originalAudioElement.currentTime = 0.25;
+    otherAudioElement.currentTime = 0;
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    await waitFor(() => {
+      expect(originalAudioElement.currentTime).toBe(0);
+      expect(otherAudioElement.currentTime).toBe(0);
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:00");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:00");
+    });
+  });
+
+  test("keeps a constant sync offset across source switches, stop, and restart", async () => {
+    const playMock = vi.fn().mockResolvedValue(undefined);
+    const pauseMock = vi.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: playMock
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: pauseMock
+    });
+
+    const project = createDefaultProject();
+    project.selectedLayerId = project.layers[0].id;
+    project.layers = project.layers.slice(0, 2).map((layer, index) => ({
+      ...layer,
+      mediaKind: "audio",
+      mediaLabel: index === 0 ? "Vocals stem" : `Player ${index + 1}`,
+      mediaSourceUrl: `file://C:/media/player-${index + 1}-vocals.wav`,
+      sourcePath: `C:/media/player-${index + 1}-vocals.wav`,
+      syncOffsetSeconds: index === 0 ? 0 : 0.25,
+      playbackPosition: index === 0 ? 0 : 0.25,
+      duration: 120,
+      isPlaying: false,
+      syncLocked: true,
+      availableSources: [
+        { kind: "original", label: "Original", path: `C:/media/player-${index + 1}-original.wav`, url: `file://C:/media/player-${index + 1}-original.wav` },
+        { kind: "vocals", label: "Vocals stem", path: `C:/media/player-${index + 1}-vocals.wav`, url: `file://C:/media/player-${index + 1}-vocals.wav` }
+      ],
+      analysisState: "ready"
+    }));
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    const initialAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      return elements;
+    });
+
+    initialAudioElements.forEach((element, index) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: index === 0 ? 0 : 0.25
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu for Player 1" }));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "original" } });
+
+    const switchedAudioElements = await waitFor(() => {
+      const elements = Array.from(container.querySelectorAll("audio")) as HTMLAudioElement[];
+      expect(elements).toHaveLength(2);
+      expect(elements.some((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav"))).toBe(true);
+      return elements;
+    });
+
+    const originalAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-1-original.wav")) as HTMLAudioElement;
+    const otherAudioElement = switchedAudioElements.find((element) => (element.getAttribute("src") ?? "").includes("player-2-vocals.wav")) as HTMLAudioElement;
+
+    [originalAudioElement, otherAudioElement].forEach((element, index) => {
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        value: 120
+      });
+      Object.defineProperty(element, "readyState", {
+        configurable: true,
+        get: () => 1
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        writable: true,
+        value: index === 0 ? 0 : 0.25
+      });
+    });
+
+    await act(async () => {
+      fireEvent.loadedMetadata(originalAudioElement);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    originalAudioElement.currentTime = 8;
+    otherAudioElement.currentTime = 8.1;
+
+    await waitFor(() => {
+      expect(otherAudioElement.currentTime).toBe(8.25);
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:08");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:08");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop Player 1" }));
+
+    await waitFor(() => {
+      expect(originalAudioElement.currentTime).toBe(0);
+      expect(otherAudioElement.currentTime).toBe(0.25);
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:00");
+      expect(getLayerElapsedTimeText("layer-2")).toBe("0:00");
+    });
+
+    originalAudioElement.currentTime = 0.2;
+    otherAudioElement.currentTime = 0.6;
+
+    fireEvent.click(screen.getByRole("button", { name: "Play Player 1" }));
+
+    await waitFor(() => {
+      expect(originalAudioElement.currentTime).toBe(0);
+      expect(otherAudioElement.currentTime).toBe(0.25);
+    });
+  });
+
   test("keeps the cached contour fixed when switching playback source", async () => {
     const project = createSingleLayerProject();
     project.layers[0] = {
@@ -1224,6 +1704,23 @@ describe("App desktop regressions", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("pitch-center-value-layer-1").textContent).toBe("A4");
+    });
+  });
+
+  test("updates sync offset from the layer menu", async () => {
+    desktopMocks.loadDesktopProject.mockResolvedValue(createSingleLayerProject());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu for Player 1" }));
+    const syncOffsetInput = screen.getByLabelText("Sync offset for Player 1") as HTMLInputElement;
+
+    expect(syncOffsetInput.value).toBe("0");
+
+    fireEvent.change(syncOffsetInput, { target: { value: "0.25" } });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Sync offset for Player 1") as HTMLInputElement).value).toBe("0.25");
     });
   });
 

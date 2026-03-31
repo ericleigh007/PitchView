@@ -21,6 +21,7 @@ describe("workspace model", () => {
     expect(project.layers).toHaveLength(4);
     expect(project.selectedLayerId).toBe("layer-1");
     expect(project.layers[0]).toMatchObject({
+      syncOffsetSeconds: 0,
       pitchKey: "C",
       pitchScaleMode: "chromatic"
     });
@@ -56,14 +57,26 @@ describe("workspace model", () => {
       layers: [{
         ...project.layers[0],
         pitchSpan: 48,
-        pitchCenterOffset: 12.7
+        pitchCenterOffset: 12.7,
+        syncOffsetSeconds: 0.2531
       }]
     });
 
     expect(hydrated.layers[0]).toMatchObject({
       pitchSpan: 36,
-      pitchCenterOffset: 13
+      pitchCenterOffset: 13,
+      syncOffsetSeconds: 0.253
     });
+  });
+
+  test("preserves constant sync offsets when seeking a synced group", () => {
+    const project = createDefaultProject();
+    const withOffset = updateLayer(project, "layer-2", { syncOffsetSeconds: 0.25 });
+    const sought = seekLayers(withOffset, ["layer-1", "layer-2"], 8, "layer-1");
+
+    expect(sought.masterTime).toBe(8);
+    expect(sought.layers[0].playbackPosition).toBe(8);
+    expect(sought.layers[1].playbackPosition).toBe(8.25);
   });
 
   test("moves a layer forward in z-order", () => {

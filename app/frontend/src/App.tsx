@@ -25,8 +25,10 @@ import {
   FIXED_PITCH_CENTER_MAX,
   FIXED_PITCH_CENTER_MIN,
   FIXED_PITCH_CENTER_REFERENCE_MIDI,
+  getLayerMasterTime,
   getImportTargetLayerIds,
   getPlaybackTargetLayerIds,
+  getSyncedLayerPlaybackPosition,
   hydrateProject,
   loadProject,
   moveLayer,
@@ -666,6 +668,14 @@ function hexToRgba(color: string, alpha: number): string {
   return color;
 }
 
+function shouldMutePlayback(layer: PlayerLayer, isVisualVideo: boolean, hasSolo: boolean): boolean {
+  return isVisualVideo || layer.mixMode === "mute" || (hasSolo && layer.mixMode !== "solo");
+}
+
+function getPlaybackVolume(layer: PlayerLayer, isVisualVideo: boolean): number {
+  return layer.mixMode === "mute" || isVisualVideo ? 0 : 1;
+}
+
 type LayerMediaRefs = {
   visual: HTMLMediaElement | null;
   audio: HTMLMediaElement | null;
@@ -1150,9 +1160,15 @@ function App() {
             continue;
           }
 
-          if (syncClock && layer.syncLocked && layer.id !== syncClock.layerId && Math.abs(currentTime - syncClock.currentTime) > 0.05) {
-            preferredElement.currentTime = syncClock.currentTime;
-            currentTime = syncClock.currentTime;
+          if (syncClock && layer.syncLocked && layer.id !== syncClock.layerId) {
+            const syncClockLayer = current.layers.find((entry) => entry.id === syncClock.layerId);
+            const syncMasterTime = syncClockLayer ? getLayerMasterTime(syncClockLayer, syncClock.currentTime) : syncClock.currentTime;
+            const targetTime = getSyncedLayerPlaybackPosition(layer, syncMasterTime);
+
+            if (Math.abs(currentTime - targetTime) > 0.05) {
+              preferredElement.currentTime = targetTime;
+              currentTime = targetTime;
+            }
           }
 
           if (layer.mediaKind === "video" && audioElement && visualElement) {
@@ -1354,8 +1370,8 @@ function App() {
     project.layers.forEach((layer) => {
       getPlaybackElements(layer.id).forEach((element, index) => {
         const isVisualVideo = layer.mediaKind === "video" && index === 0;
-        element.muted = isVisualVideo || layer.mixMode === "mute" || (hasSolo && layer.mixMode !== "solo");
-        element.volume = layer.mixMode === "mute" || isVisualVideo ? 0 : 1;
+        element.muted = shouldMutePlayback(layer, isVisualVideo, hasSolo);
+        element.volume = getPlaybackVolume(layer, isVisualVideo);
       });
     });
   }, [project.layers]);
@@ -1421,6 +1437,52 @@ function App() {
 
   function patchLayer(layerId: string, patch: Partial<PlayerLayer>) {
     setProject((current) => updateLayer(current, layerId, patch));
+  }
+
+  function handleMixModeChange(layerId: string, mixMode: PlayerLayer["mixMode"]) {
+    setProject((current) => {
+      if (mixMode !== "solo") {
+        return updateLayer(current, layerId, { mixMode });
+      }
+
+      return {
+        ...current,
+        layers: current.layers.map((layer) => {
+          if (layer.id === layerId) {
+            return { ...layer, mixMode: "solo" };
+          }
+
+          if (layer.mixMode === "solo") {
+            return { ...layer, mixMode: "blend" };
+          }
+
+          return layer;
+        })
+      };
+    });
+  }
+
+  function handleSyncOffsetChange(layerId: string, syncOffsetSeconds: number) {
+    setProject((current) => {
+      const layer = current.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        return current;
+      }
+
+      const nextProject = updateLayer(current, layerId, {
+        syncOffsetSeconds,
+        playbackPosition: layer.syncLocked ? Math.max(0, current.masterTime + syncOffsetSeconds) : layer.playbackPosition
+      });
+
+      const updatedLayer = nextProject.layers.find((entry) => entry.id === layerId);
+      const nextPlaybackPosition = updatedLayer?.playbackPosition ?? layer.playbackPosition;
+
+      getPlaybackElements(layerId).forEach((element) => {
+        element.currentTime = getClampedPlaybackTime(element, nextPlaybackPosition);
+      });
+
+      return nextProject;
+    });
   }
 
   function focusLayer(layerId: string, shouldBringToFront = false) {
@@ -1757,9 +1819,33 @@ function App() {
     setProject((current) => setLayersPlaying(current, targetIds, playing));
   }
 
+  function getClampedPlaybackTime(element: HTMLMediaElement, playbackPosition: number) {
+    if (!Number.isFinite(element.duration)) {
+      return Math.max(0, playbackPosition);
+    }
+
+    return Math.max(0, Math.min(playbackPosition, element.duration || playbackPosition));
+  }
+
   function handlePlay(layerId = project.selectedLayerId, allowFallback = true) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((entry) => entry.id === layerId) ?? selectedLayer;
+    const sourceMasterTime = sourceLayer?.syncLocked ? getLayerMasterTime(sourceLayer) : sourceLayer?.playbackPosition ?? 0;
     let startedAnyPlayback = false;
+
+    if (sourceLayer?.syncLocked) {
+      targetIds.forEach((targetId) => {
+        const targetLayer = project.layers.find((entry) => entry.id === targetId);
+        if (!targetLayer) {
+          return;
+        }
+
+        const targetPlaybackPosition = getSyncedLayerPlaybackPosition(targetLayer, sourceMasterTime);
+        getPlaybackElements(targetId).forEach((element) => {
+          element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
+        });
+      });
+    }
 
     targetIds.forEach((targetId) => {
       const layer = project.layers.find((entry) => entry.id === targetId);
@@ -1818,42 +1904,61 @@ function App() {
 
   function handleStop(layerId = project.selectedLayerId) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, 0)
+        : 0;
+
       for (const element of getPlaybackElements(targetId)) {
         element.pause();
-        element.currentTime = 0;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(setLayersPlaying(current, targetIds, false), targetIds, 0));
+    setProject((current) => seekLayers(setLayersPlaying(current, targetIds, false), targetIds, sourceLayer.syncLocked ? sourceLayer.syncOffsetSeconds : 0, layerId));
   }
 
   function handleSeek(deltaSeconds: number, layerId = project.selectedLayerId) {
     const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
     const nextTime = Math.max(0, Math.min(sourceLayer.duration || Number.MAX_SAFE_INTEGER, sourceLayer.playbackPosition + deltaSeconds));
+    const nextMasterTime = sourceLayer.syncLocked ? getLayerMasterTime(sourceLayer, nextTime) : nextTime;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, nextMasterTime)
+        : nextTime;
+
       for (const element of getPlaybackElements(targetId)) {
         element.pause();
-        element.currentTime = nextTime;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(current, targetIds, nextTime));
+    setProject((current) => seekLayers(current, targetIds, nextTime, layerId));
   }
 
   function handleScrub(layerId: string, playbackPosition: number) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
+    const nextMasterTime = sourceLayer.syncLocked ? getLayerMasterTime(sourceLayer, playbackPosition) : playbackPosition;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, nextMasterTime)
+        : playbackPosition;
+
       for (const element of getPlaybackElements(targetId)) {
-        element.currentTime = playbackPosition;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(current, targetIds, playbackPosition));
+    setProject((current) => seekLayers(current, targetIds, playbackPosition, layerId));
   }
 
   return (
@@ -2198,8 +2303,9 @@ function App() {
                           <label>
                             <span>Mix</span>
                             <select
+                              aria-label={`Mix mode for ${layer.name}`}
                               value={layer.mixMode}
-                              onChange={(event) => patchLayer(layer.id, { mixMode: event.target.value as PlayerLayer["mixMode"] })}
+                              onChange={(event) => handleMixModeChange(layer.id, event.target.value as PlayerLayer["mixMode"])}
                             >
                               <option value="blend">Blend</option>
                               <option value="solo">Solo</option>
@@ -2400,6 +2506,19 @@ function App() {
                               onChange={(event) => patchLayer(layer.id, { syncLocked: event.target.checked })}
                             />
                           </label>
+
+                          <label>
+                            <span>Sync offset (s)</span>
+                            <input
+                              type="number"
+                              aria-label={`Sync offset for ${layer.name}`}
+                              min="-30"
+                              max="30"
+                              step="0.01"
+                              value={layer.syncOffsetSeconds}
+                              onChange={(event) => handleSyncOffsetChange(layer.id, Number(event.target.value))}
+                            />
+                          </label>
                         </div>
 
                         <div className="layer-menu-actions">
@@ -2470,6 +2589,7 @@ function App() {
                                 ref={(element) => setMediaElement(layer.id, "audio", element)}
                                 src={layer.mediaSourceUrl}
                                 preload="metadata"
+                                muted={shouldMutePlayback(layer, false, project.layers.some((entry) => entry.mixMode === "solo"))}
                                 onError={(event) => logMediaElementError(layer, "audio", event.currentTarget)}
                                 onLoadedMetadata={handleMediaLoadedMetadata(layer)}
                                 onTimeUpdate={(event) => {
@@ -2487,7 +2607,7 @@ function App() {
                                 ref={(element) => setMediaElement(layer.id, "audio", element)}
                                 src={layer.mediaSourceUrl}
                                 preload="metadata"
-                                muted={layer.mixMode === "mute"}
+                                muted={shouldMutePlayback(layer, false, project.layers.some((entry) => entry.mixMode === "solo"))}
                                 onError={(event) => logMediaElementError(layer, "audio", event.currentTarget)}
                                 onLoadedMetadata={handleMediaLoadedMetadata(layer)}
                                 onTimeUpdate={(event) => {

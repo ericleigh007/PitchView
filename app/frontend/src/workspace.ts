@@ -27,6 +27,30 @@ function normalizePitchCenterOffset(offset: number): number {
   return Math.max(FIXED_PITCH_CENTER_MIN, Math.min(FIXED_PITCH_CENTER_MAX, Math.round(offset)));
 }
 
+function normalizeSyncOffsetSeconds(offset: number): number {
+  if (!Number.isFinite(offset)) {
+    return 0;
+  }
+
+  return Math.round(offset * 1000) / 1000;
+}
+
+export function getLayerMasterTime(layer: Pick<PlayerLayer, "syncLocked" | "syncOffsetSeconds" | "playbackPosition">, playbackPosition = layer.playbackPosition): number {
+  if (!layer.syncLocked) {
+    return Math.max(0, playbackPosition);
+  }
+
+  return Math.max(0, playbackPosition - layer.syncOffsetSeconds);
+}
+
+export function getSyncedLayerPlaybackPosition(layer: Pick<PlayerLayer, "syncLocked" | "syncOffsetSeconds">, masterTime: number): number {
+  if (!layer.syncLocked) {
+    return Math.max(0, masterTime);
+  }
+
+  return Math.max(0, masterTime + layer.syncOffsetSeconds);
+}
+
 export type ImportTarget = "selected" | "synced" | "all";
 
 export type ImportedMedia = {
@@ -92,6 +116,7 @@ export function createDefaultLayers(count = 4): PlayerLayer[] {
     syncLocked: true,
     visible: true,
     mixMode: "blend",
+    syncOffsetSeconds: 0,
     playbackPosition: 0,
     duration: 0,
     isPlaying: false,
@@ -152,6 +177,10 @@ export function updateLayer(project: WorkspaceProject, layerId: string, patch: P
 
   if (patch.pitchCenterOffset !== undefined) {
     normalizedPatch.pitchCenterOffset = normalizePitchCenterOffset(patch.pitchCenterOffset);
+  }
+
+  if (patch.syncOffsetSeconds !== undefined) {
+    normalizedPatch.syncOffsetSeconds = normalizeSyncOffsetSeconds(patch.syncOffsetSeconds);
   }
 
   return {
@@ -269,14 +298,16 @@ export function setLayersPlaying(project: WorkspaceProject, layerIds: string[], 
   };
 }
 
-export function seekLayers(project: WorkspaceProject, layerIds: string[], playbackPosition: number): WorkspaceProject {
+export function seekLayers(project: WorkspaceProject, layerIds: string[], playbackPosition: number, sourceLayerId?: string): WorkspaceProject {
   const idSet = new Set(layerIds);
+  const sourceLayer = project.layers.find((layer) => layer.id === (sourceLayerId ?? layerIds[0]));
+  const masterTime = sourceLayer ? getLayerMasterTime(sourceLayer, playbackPosition) : Math.max(0, playbackPosition);
 
   return {
     ...project,
-    masterTime: playbackPosition,
+    masterTime,
     layers: project.layers.map((layer) => idSet.has(layer.id)
-      ? { ...layer, playbackPosition, isPlaying: false }
+      ? { ...layer, playbackPosition: getSyncedLayerPlaybackPosition(layer, masterTime), isPlaying: false }
       : layer)
   };
 }
@@ -293,16 +324,30 @@ export function updateLayerTime(
     return project;
   }
 
+  const masterTime = sourceLayer.syncLocked ? getLayerMasterTime(sourceLayer, playbackPosition) : project.masterTime;
+
   return {
     ...project,
-    masterTime: sourceLayer.syncLocked ? playbackPosition : project.masterTime,
-    layers: project.layers.map((layer) => layer.id === layerId
-      ? {
+    masterTime,
+    layers: project.layers.map((layer) => {
+      if (sourceLayer.syncLocked && layer.syncLocked) {
+        return {
+          ...layer,
+          playbackPosition: getSyncedLayerPlaybackPosition(layer, masterTime),
+          duration: layer.id === layerId ? duration ?? layer.duration : layer.duration
+        };
+      }
+
+      if (layer.id !== layerId) {
+        return layer;
+      }
+
+      return {
         ...layer,
         playbackPosition,
         duration: duration ?? layer.duration
-      }
-      : layer)
+      };
+    })
   };
 }
 
@@ -450,7 +495,8 @@ export function hydrateProject(project: WorkspaceProject): WorkspaceProject {
       return {
         ...hydratedLayer,
         pitchSpan: normalizePitchSpan(hydratedLayer.pitchSpan),
-        pitchCenterOffset: normalizePitchCenterOffset(hydratedLayer.pitchCenterOffset)
+        pitchCenterOffset: normalizePitchCenterOffset(hydratedLayer.pitchCenterOffset),
+        syncOffsetSeconds: normalizeSyncOffsetSeconds(hydratedLayer.syncOffsetSeconds)
       };
     })
   };

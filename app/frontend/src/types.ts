@@ -44,6 +44,7 @@ export type PlayerLayer = {
   syncLocked: boolean;
   visible: boolean;
   mixMode: MixMode;
+  syncOffsetSeconds: number;
   playbackPosition: number;
   duration: number;
   isPlaying: boolean;
