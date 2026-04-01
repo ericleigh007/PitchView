@@ -12,6 +12,9 @@
     "@wdio/mocha-framework": "^9.19.2",
     "@wdio/spec-reporter": "^9.19.2"
   },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  },
   "scripts": {
     "check:prerequisites": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/check-prerequisites.ps1",
     "bootstrap": "powershell -ExecutionPolicy Bypass -File ./scripts/bootstrap.ps1",

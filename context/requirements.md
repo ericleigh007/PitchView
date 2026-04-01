@@ -71,6 +71,14 @@ The app is intended for practice, analysis, and alignment workflows where a user
 - The pitch center should be adjustable by mouse click and drag, or similar.
 - The app must allow the user to choose the preferred pitch source.
 - The app must favor separated vocals as the preferred pitch source when available.
+- Each player must expose a musical key selector in the player settings menu.
+- Musical keys in the player settings must be presented in circle-of-fifths order.
+- The app must spell enharmonic note names according to the selected key signature.
+  - Sharp-side keys such as G must prefer sharp spellings such as F#.
+  - Flat-side keys such as F must prefer flat spellings such as Bb.
+- Each player must expose a scale-type selector that supports at least chromatic, major, and minor modes.
+- When a major or minor scale is selected, the notes that belong to that scale must be visually emphasized in the pitch rail and guide rendering.
+- Notes that are in the selected scale must be bolded.
 
 #### Pitch display performance
 - Pitch model input must be leveled to allow the pitch to be tracked over a wide range of amplitudes

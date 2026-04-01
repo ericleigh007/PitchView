@@ -16,17 +16,23 @@ import {
   toDesktopMediaUrl,
   type DesktopAnalysisPayload
 } from "./desktop";
-import type { PitchAnalysisSourceKind, PlayerLayer, ProcessingDeviceMode } from "./types";
+import type { MusicalKey, PitchAnalysisSourceKind, PitchScaleMode, PlayerLayer, ProcessingDeviceMode } from "./types";
 import {
   addLayer,
   assignImportedMedia,
   assignImportedMediaToLayerIds,
   bringLayerToFront,
+  FIXED_PITCH_CENTER_MAX,
+  FIXED_PITCH_CENTER_MIN,
+  FIXED_PITCH_CENTER_REFERENCE_MIDI,
+  getLayerMasterTime,
   getImportTargetLayerIds,
   getPlaybackTargetLayerIds,
+  getSyncedLayerPlaybackPosition,
   hydrateProject,
   loadProject,
   moveLayer,
+  PITCH_RANGE_VALUES,
   removeLayer,
   removeSelectedLayer,
   saveProject,
@@ -182,7 +188,26 @@ function formatProcessingDeviceLabel(device: ProcessingDeviceMode): string {
   }
 }
 
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const SHARP_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const FLAT_NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const CIRCLE_OF_FIFTHS_KEYS: MusicalKey[] = ["C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F"];
+const FLAT_KEYS = new Set<MusicalKey>(["F", "Bb", "Eb", "Ab", "Db"]);
+const KEY_TO_SEMITONE: Record<MusicalKey, number> = {
+  C: 0,
+  G: 7,
+  D: 2,
+  A: 9,
+  E: 4,
+  B: 11,
+  "F#": 6,
+  Db: 1,
+  Ab: 8,
+  Eb: 3,
+  Bb: 10,
+  F: 5
+};
+const MAJOR_SCALE_INTERVALS = new Set([0, 2, 4, 5, 7, 9, 11]);
+const MINOR_SCALE_INTERVALS = new Set([0, 2, 3, 5, 7, 8, 10]);
 
 function buildEnvelopePath(values: number[], width: number, height: number, totalDuration: number, startTime = 0, endTime = totalDuration): string {
   if (!values.length) {
@@ -454,32 +479,59 @@ function buildPitchPoints(layer: PlayerLayer, width: number, height: number, sta
       x,
       y,
       frequency: value,
-      noteLabel: formatNoteLabel(value),
+      noteLabel: formatNoteLabel(value, layer.pitchKey),
       timeSeconds,
       semitoneOffset
     }];
   });
 }
 
+function frequencyToMidi(frequency: number): number {
+  return 69 + 12 * Math.log2(frequency / 440);
+}
+
 function getLayerCenterPitch(layer: PlayerLayer): number {
   const contour = getReliablePitchContour(layer).filter((value) => value > 0);
 
   if (layer.pitchCenterMode === "adaptive" && contour.length) {
-    return contour.reduce((sum, value) => sum + value, 0) / contour.length;
+    const averageMidi = contour.reduce((sum, value) => sum + frequencyToMidi(value), 0) / contour.length;
+    return midiToFrequency(Math.round(averageMidi));
   }
 
-  return 220 * Math.pow(2, layer.pitchCenterOffset / 12);
+  return midiToFrequency(FIXED_PITCH_CENTER_REFERENCE_MIDI + layer.pitchCenterOffset);
 }
 
-function formatNoteLabel(frequency: number): string {
+function getDisplayedPitchCenterOffset(layer: PlayerLayer): number {
+  if (layer.pitchCenterMode === "adaptive") {
+    const adaptiveOffset = Math.round(frequencyToMidi(getLayerCenterPitch(layer))) - FIXED_PITCH_CENTER_REFERENCE_MIDI;
+    return clamp(adaptiveOffset, FIXED_PITCH_CENTER_MIN, FIXED_PITCH_CENTER_MAX);
+  }
+
+  return layer.pitchCenterOffset;
+}
+
+function keyUsesFlats(key: MusicalKey): boolean {
+  return FLAT_KEYS.has(key);
+}
+
+function getNoteNameForMidi(midi: number, key: MusicalKey): string {
+  const noteNames = keyUsesFlats(key) ? FLAT_NOTE_NAMES : SHARP_NOTE_NAMES;
+  return noteNames[((midi % 12) + 12) % 12];
+}
+
+function formatMidiNoteLabel(midi: number, key: MusicalKey): string {
+  const noteName = getNoteNameForMidi(midi, key);
+  const octave = Math.floor(midi / 12) - 1;
+  return `${noteName}${octave}`;
+}
+
+function formatNoteLabel(frequency: number, key: MusicalKey): string {
   if (!Number.isFinite(frequency) || frequency <= 0) {
     return "--";
   }
 
-  const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
-  const noteName = NOTE_NAMES[((midi % 12) + 12) % 12];
-  const octave = Math.floor(midi / 12) - 1;
-  return `${noteName}${octave}`;
+  const midi = Math.round(frequencyToMidi(frequency));
+  return formatMidiNoteLabel(midi, key);
 }
 
 function midiToFrequency(midi: number): number {
@@ -502,15 +554,57 @@ function getPitchGridStep(pitchSpan: number): number {
   return 4;
 }
 
+function formatScaleModeLabel(scaleMode: PitchScaleMode): string {
+  switch (scaleMode) {
+    case "major":
+      return "Maj";
+    case "minor":
+      return "Min";
+    default:
+      return "Chromatic";
+  }
+}
+
+function formatPitchRangeLabel(pitchSpan: number): string {
+  switch (pitchSpan) {
+    case 12:
+      return "1 Octave";
+    case 24:
+      return "2 Octaves";
+    case 36:
+      return "3 Octaves";
+    default:
+      return `${Math.max(1, Math.round(pitchSpan / 12))} Octaves`;
+  }
+}
+
+function formatPitchCenterControlLabel(layer: PlayerLayer): string {
+  const displayedOffset = getDisplayedPitchCenterOffset(layer);
+  return formatMidiNoteLabel(FIXED_PITCH_CENTER_REFERENCE_MIDI + displayedOffset, layer.pitchKey);
+}
+
+function isMidiInSelectedScale(midi: number, key: MusicalKey, scaleMode: PitchScaleMode): boolean {
+  if (scaleMode === "chromatic") {
+    return true;
+  }
+
+  const tonic = KEY_TO_SEMITONE[key];
+  const normalized = (((midi % 12) - tonic) % 12 + 12) % 12;
+  return scaleMode === "major"
+    ? MAJOR_SCALE_INTERVALS.has(normalized)
+    : MINOR_SCALE_INTERVALS.has(normalized);
+}
+
 function getPitchScaleLabels(layer: PlayerLayer): Array<{
   noteLabel: string;
   positionPercent: number;
   frequency: number;
   isPrimary: boolean;
   isCenter: boolean;
+  isInScale: boolean;
 }> {
   const centerPitch = getLayerCenterPitch(layer);
-  const centerMidi = Math.round(69 + 12 * Math.log2(centerPitch / 440));
+  const centerMidi = Math.round(frequencyToMidi(centerPitch));
   const halfSpan = Math.max(Math.round(layer.pitchSpan / 2), 1);
   const gridStep = getPitchGridStep(layer.pitchSpan);
 
@@ -520,16 +614,20 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
     const frequency = midiToFrequency(midi);
     const distanceFromCenter = Math.abs(semitoneOffset);
     const isCenter = semitoneOffset === 0;
-    const isPrimary = isCenter || semitoneOffset % gridStep === 0;
+    const isInScale = isMidiInSelectedScale(midi, layer.pitchKey, layer.pitchScaleMode);
+    const isPrimary = layer.pitchScaleMode === "chromatic"
+      ? isCenter || semitoneOffset % gridStep === 0
+      : isCenter || isInScale;
     const y = getPitchPlotYForFrequency(layer, PITCH_PLOT_HEIGHT, frequency) ?? 0;
     const positionPercent = (y / PITCH_PLOT_HEIGHT) * 100;
 
     return {
-      noteLabel: formatNoteLabel(frequency),
+      noteLabel: formatMidiNoteLabel(midi, layer.pitchKey),
       positionPercent,
       frequency,
       isPrimary,
-      isCenter: distanceFromCenter === 0
+      isCenter: distanceFromCenter === 0,
+      isInScale
     };
   });
 }
@@ -568,6 +666,14 @@ function hexToRgba(color: string, alpha: number): string {
   }
 
   return color;
+}
+
+function shouldMutePlayback(layer: PlayerLayer, isVisualVideo: boolean, hasSolo: boolean): boolean {
+  return isVisualVideo || layer.mixMode === "mute" || (hasSolo && layer.mixMode !== "solo");
+}
+
+function getPlaybackVolume(layer: PlayerLayer, isVisualVideo: boolean): number {
+  return layer.mixMode === "mute" || isVisualVideo ? 0 : 1;
 }
 
 type LayerMediaRefs = {
@@ -1005,6 +1111,36 @@ function App() {
       setProject((current) => {
         let nextProject = current;
 
+        const syncClockCandidateIds = [
+          current.selectedLayerId,
+          ...current.layers
+            .filter((layer) => layer.syncLocked && layer.isPlaying && layer.id !== current.selectedLayerId)
+            .map((layer) => layer.id)
+        ];
+        const syncClock = syncClockCandidateIds.reduce<{ layerId: string; currentTime: number } | null>((clock, layerId) => {
+          if (clock) {
+            return clock;
+          }
+
+          const layer = current.layers.find((entry) => entry.id === layerId);
+          if (!layer || !layer.syncLocked || !layer.isPlaying) {
+            return null;
+          }
+
+          const refs = mediaRefs.current[layer.id];
+          const preferredElement = refs?.audio ?? refs?.visual ?? null;
+          if (!preferredElement) {
+            return null;
+          }
+
+          const currentTime = preferredElement.currentTime;
+          if (!Number.isFinite(currentTime)) {
+            return null;
+          }
+
+          return { layerId: layer.id, currentTime };
+        }, null);
+
         for (const layer of current.layers) {
           if (!layer.isPlaying) {
             continue;
@@ -1018,10 +1154,21 @@ function App() {
             continue;
           }
 
-          const currentTime = preferredElement.currentTime;
+          let currentTime = preferredElement.currentTime;
           const duration = Number.isFinite(preferredElement.duration) ? preferredElement.duration : layer.duration;
           if (!Number.isFinite(currentTime)) {
             continue;
+          }
+
+          if (syncClock && layer.syncLocked && layer.id !== syncClock.layerId) {
+            const syncClockLayer = current.layers.find((entry) => entry.id === syncClock.layerId);
+            const syncMasterTime = syncClockLayer ? getLayerMasterTime(syncClockLayer, syncClock.currentTime) : syncClock.currentTime;
+            const targetTime = getSyncedLayerPlaybackPosition(layer, syncMasterTime);
+
+            if (Math.abs(currentTime - targetTime) > 0.05) {
+              preferredElement.currentTime = targetTime;
+              currentTime = targetTime;
+            }
           }
 
           if (layer.mediaKind === "video" && audioElement && visualElement) {
@@ -1223,8 +1370,8 @@ function App() {
     project.layers.forEach((layer) => {
       getPlaybackElements(layer.id).forEach((element, index) => {
         const isVisualVideo = layer.mediaKind === "video" && index === 0;
-        element.muted = isVisualVideo || layer.mixMode === "mute" || (hasSolo && layer.mixMode !== "solo");
-        element.volume = layer.mixMode === "mute" || isVisualVideo ? 0 : 1;
+        element.muted = shouldMutePlayback(layer, isVisualVideo, hasSolo);
+        element.volume = getPlaybackVolume(layer, isVisualVideo);
       });
     });
   }, [project.layers]);
@@ -1290,6 +1437,52 @@ function App() {
 
   function patchLayer(layerId: string, patch: Partial<PlayerLayer>) {
     setProject((current) => updateLayer(current, layerId, patch));
+  }
+
+  function handleMixModeChange(layerId: string, mixMode: PlayerLayer["mixMode"]) {
+    setProject((current) => {
+      if (mixMode !== "solo") {
+        return updateLayer(current, layerId, { mixMode });
+      }
+
+      return {
+        ...current,
+        layers: current.layers.map((layer) => {
+          if (layer.id === layerId) {
+            return { ...layer, mixMode: "solo" };
+          }
+
+          if (layer.mixMode === "solo") {
+            return { ...layer, mixMode: "blend" };
+          }
+
+          return layer;
+        })
+      };
+    });
+  }
+
+  function handleSyncOffsetChange(layerId: string, syncOffsetSeconds: number) {
+    setProject((current) => {
+      const layer = current.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        return current;
+      }
+
+      const nextProject = updateLayer(current, layerId, {
+        syncOffsetSeconds,
+        playbackPosition: layer.syncLocked ? Math.max(0, current.masterTime + syncOffsetSeconds) : layer.playbackPosition
+      });
+
+      const updatedLayer = nextProject.layers.find((entry) => entry.id === layerId);
+      const nextPlaybackPosition = updatedLayer?.playbackPosition ?? layer.playbackPosition;
+
+      getPlaybackElements(layerId).forEach((element) => {
+        element.currentTime = getClampedPlaybackTime(element, nextPlaybackPosition);
+      });
+
+      return nextProject;
+    });
   }
 
   function focusLayer(layerId: string, shouldBringToFront = false) {
@@ -1626,9 +1819,33 @@ function App() {
     setProject((current) => setLayersPlaying(current, targetIds, playing));
   }
 
+  function getClampedPlaybackTime(element: HTMLMediaElement, playbackPosition: number) {
+    if (!Number.isFinite(element.duration)) {
+      return Math.max(0, playbackPosition);
+    }
+
+    return Math.max(0, Math.min(playbackPosition, element.duration || playbackPosition));
+  }
+
   function handlePlay(layerId = project.selectedLayerId, allowFallback = true) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((entry) => entry.id === layerId) ?? selectedLayer;
+    const sourceMasterTime = sourceLayer?.syncLocked ? getLayerMasterTime(sourceLayer) : sourceLayer?.playbackPosition ?? 0;
     let startedAnyPlayback = false;
+
+    if (sourceLayer?.syncLocked) {
+      targetIds.forEach((targetId) => {
+        const targetLayer = project.layers.find((entry) => entry.id === targetId);
+        if (!targetLayer) {
+          return;
+        }
+
+        const targetPlaybackPosition = getSyncedLayerPlaybackPosition(targetLayer, sourceMasterTime);
+        getPlaybackElements(targetId).forEach((element) => {
+          element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
+        });
+      });
+    }
 
     targetIds.forEach((targetId) => {
       const layer = project.layers.find((entry) => entry.id === targetId);
@@ -1687,42 +1904,61 @@ function App() {
 
   function handleStop(layerId = project.selectedLayerId) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, 0)
+        : 0;
+
       for (const element of getPlaybackElements(targetId)) {
         element.pause();
-        element.currentTime = 0;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(setLayersPlaying(current, targetIds, false), targetIds, 0));
+    setProject((current) => seekLayers(setLayersPlaying(current, targetIds, false), targetIds, sourceLayer.syncLocked ? sourceLayer.syncOffsetSeconds : 0, layerId));
   }
 
   function handleSeek(deltaSeconds: number, layerId = project.selectedLayerId) {
     const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
     const nextTime = Math.max(0, Math.min(sourceLayer.duration || Number.MAX_SAFE_INTEGER, sourceLayer.playbackPosition + deltaSeconds));
+    const nextMasterTime = sourceLayer.syncLocked ? getLayerMasterTime(sourceLayer, nextTime) : nextTime;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, nextMasterTime)
+        : nextTime;
+
       for (const element of getPlaybackElements(targetId)) {
         element.pause();
-        element.currentTime = nextTime;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(current, targetIds, nextTime));
+    setProject((current) => seekLayers(current, targetIds, nextTime, layerId));
   }
 
   function handleScrub(layerId: string, playbackPosition: number) {
     const targetIds = getPlaybackTargetLayerIds(project, layerId);
+    const sourceLayer = project.layers.find((layer) => layer.id === layerId) ?? selectedLayer;
+    const nextMasterTime = sourceLayer.syncLocked ? getLayerMasterTime(sourceLayer, playbackPosition) : playbackPosition;
 
     targetIds.forEach((targetId) => {
+      const targetLayer = project.layers.find((layer) => layer.id === targetId);
+      const targetPlaybackPosition = sourceLayer.syncLocked && targetLayer
+        ? getSyncedLayerPlaybackPosition(targetLayer, nextMasterTime)
+        : playbackPosition;
+
       for (const element of getPlaybackElements(targetId)) {
-        element.currentTime = playbackPosition;
+        element.currentTime = getClampedPlaybackTime(element, targetPlaybackPosition);
       }
     });
 
-    setProject((current) => seekLayers(current, targetIds, playbackPosition));
+    setProject((current) => seekLayers(current, targetIds, playbackPosition, layerId));
   }
 
   return (
@@ -2067,8 +2303,9 @@ function App() {
                           <label>
                             <span>Mix</span>
                             <select
+                              aria-label={`Mix mode for ${layer.name}`}
                               value={layer.mixMode}
-                              onChange={(event) => patchLayer(layer.id, { mixMode: event.target.value as PlayerLayer["mixMode"] })}
+                              onChange={(event) => handleMixModeChange(layer.id, event.target.value as PlayerLayer["mixMode"])}
                             >
                               <option value="blend">Blend</option>
                               <option value="solo">Solo</option>
@@ -2153,27 +2390,74 @@ function App() {
                           </label>
 
                           <label>
-                            <span>Pitch span</span>
+                            <span className="control-label-row">
+                              <span>Pitch range</span>
+                              <span className="control-value" data-testid={`pitch-range-value-${layer.id}`}>{formatPitchRangeLabel(layer.pitchSpan)}</span>
+                            </span>
                             <input
                               type="range"
+                              aria-label={`Pitch range for ${layer.name}`}
                               min="12"
-                              max="48"
-                              step="1"
+                              max="36"
+                              step="12"
+                              list="pitch-range-detents"
                               value={layer.pitchSpan}
                               onChange={(event) => patchLayer(layer.id, { pitchSpan: Number(event.target.value) })}
                             />
+                            <span className="range-detent-labels" aria-hidden="true">
+                              <span>1 Oct</span>
+                              <span>2 Oct</span>
+                              <span>3 Oct</span>
+                            </span>
                           </label>
 
                           <label>
-                            <span>Pitch center</span>
+                            <span className="control-label-row">
+                              <span>Pitch center</span>
+                              <span className="control-value" data-testid={`pitch-center-value-${layer.id}`}>{formatPitchCenterControlLabel(layer)}</span>
+                            </span>
                             <input
                               type="range"
-                              min="-24"
-                              max="24"
+                              aria-label={`Pitch center note for ${layer.name}`}
+                              min={String(FIXED_PITCH_CENTER_MIN)}
+                              max={String(FIXED_PITCH_CENTER_MAX)}
                               step="1"
-                              value={layer.pitchCenterOffset}
+                              list="pitch-center-note-detents"
+                              disabled={layer.pitchCenterMode === "adaptive"}
+                              value={getDisplayedPitchCenterOffset(layer)}
                               onChange={(event) => patchLayer(layer.id, { pitchCenterOffset: Number(event.target.value) })}
                             />
+                            <span className="range-help-text">
+                              {layer.pitchCenterMode === "adaptive"
+                                ? "Adaptive center snaps to the nearest note. Switch to Fixed to choose a note center."
+                                : "Fixed note center with semitone detents."}
+                            </span>
+                          </label>
+
+                          <label>
+                            <span>Key</span>
+                            <select
+                              aria-label={`Key for ${layer.name}`}
+                              value={layer.pitchKey}
+                              onChange={(event) => patchLayer(layer.id, { pitchKey: event.target.value as MusicalKey })}
+                            >
+                              {CIRCLE_OF_FIFTHS_KEYS.map((key) => (
+                                <option key={key} value={key}>{key}</option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <label>
+                            <span>Scale</span>
+                            <select
+                              aria-label={`Scale for ${layer.name}`}
+                              value={layer.pitchScaleMode}
+                              onChange={(event) => patchLayer(layer.id, { pitchScaleMode: event.target.value as PitchScaleMode })}
+                            >
+                              <option value="chromatic">Chromatic</option>
+                              <option value="major">Major</option>
+                              <option value="minor">Minor</option>
+                            </select>
                           </label>
 
                           <label>
@@ -2205,6 +2489,7 @@ function App() {
                           <label>
                             <span>Center mode</span>
                             <select
+                              aria-label={`Center mode for ${layer.name}`}
                               value={layer.pitchCenterMode}
                               onChange={(event) => patchLayer(layer.id, { pitchCenterMode: event.target.value as PlayerLayer["pitchCenterMode"] })}
                             >
@@ -2219,6 +2504,19 @@ function App() {
                               type="checkbox"
                               checked={layer.syncLocked}
                               onChange={(event) => patchLayer(layer.id, { syncLocked: event.target.checked })}
+                            />
+                          </label>
+
+                          <label>
+                            <span>Sync offset (s)</span>
+                            <input
+                              type="number"
+                              aria-label={`Sync offset for ${layer.name}`}
+                              min="-30"
+                              max="30"
+                              step="0.01"
+                              value={layer.syncOffsetSeconds}
+                              onChange={(event) => handleSyncOffsetChange(layer.id, Number(event.target.value))}
                             />
                           </label>
                         </div>
@@ -2248,18 +2546,25 @@ function App() {
 
                           <div className="media-visual-stage">
                             <aside className="layer-note-scale" aria-hidden="true">
-                              <span className="rail-label">Scale</span>
+                              <span className="rail-label">
+                                {layer.pitchScaleMode === "chromatic"
+                                  ? "Chromatic"
+                                  : `${layer.pitchKey} ${formatScaleModeLabel(layer.pitchScaleMode)}`}
+                              </span>
                               <div className="note-scale-list">
                                 {pitchScaleLabels.map((entry) => (
                                   <span
                                     key={`${layer.id}-${entry.noteLabel}-${entry.frequency}`}
-                                    className={entry.isPrimary
-                                      ? "note-scale-mark note-scale-mark-primary"
-                                      : "note-scale-mark"}
+                                    className={[
+                                      "note-scale-mark",
+                                      entry.isPrimary ? "note-scale-mark-primary" : "",
+                                      entry.isInScale ? "note-scale-mark-in-scale" : "",
+                                      layer.pitchScaleMode !== "chromatic" && !entry.isInScale ? "note-scale-mark-out-of-scale" : ""
+                                    ].filter(Boolean).join(" ")}
                                     style={{ top: `${entry.positionPercent}%` }}
                                   >
                                     <span className="note-scale-guide" />
-                                    <span className="note-scale-note">{entry.noteLabel}</span>
+                                    <span className={entry.isInScale ? "note-scale-note note-scale-note-in-scale" : "note-scale-note"}>{entry.noteLabel}</span>
                                   </span>
                                 ))}
                               </div>
@@ -2284,6 +2589,7 @@ function App() {
                                 ref={(element) => setMediaElement(layer.id, "audio", element)}
                                 src={layer.mediaSourceUrl}
                                 preload="metadata"
+                                muted={shouldMutePlayback(layer, false, project.layers.some((entry) => entry.mixMode === "solo"))}
                                 onError={(event) => logMediaElementError(layer, "audio", event.currentTarget)}
                                 onLoadedMetadata={handleMediaLoadedMetadata(layer)}
                                 onTimeUpdate={(event) => {
@@ -2301,7 +2607,7 @@ function App() {
                                 ref={(element) => setMediaElement(layer.id, "audio", element)}
                                 src={layer.mediaSourceUrl}
                                 preload="metadata"
-                                muted={layer.mixMode === "mute"}
+                                muted={shouldMutePlayback(layer, false, project.layers.some((entry) => entry.mixMode === "solo"))}
                                 onError={(event) => logMediaElementError(layer, "audio", event.currentTarget)}
                                 onLoadedMetadata={handleMediaLoadedMetadata(layer)}
                                 onTimeUpdate={(event) => {
@@ -2321,10 +2627,16 @@ function App() {
                               <div className="pitch-overlay-viewport">
                                 <div className="pitch-overlay-content">
                                   <div className="pitch-grid" aria-hidden="true">
-                                    {pitchScaleLabels.filter((entry) => entry.isPrimary).map((entry) => (
+                                    {pitchScaleLabels.map((entry) => (
                                       <span
                                         key={`${layer.id}-grid-${entry.noteLabel}-${entry.frequency}`}
-                                        className={entry.isCenter ? "pitch-grid-line pitch-grid-line-center" : "pitch-grid-line"}
+                                        className={[
+                                          "pitch-grid-line",
+                                          entry.isPrimary ? "pitch-grid-line-primary" : "",
+                                          entry.isCenter ? "pitch-grid-line-center" : "",
+                                          layer.pitchScaleMode !== "chromatic" && !entry.isInScale ? "pitch-grid-line-out-of-scale" : "",
+                                          entry.isInScale ? "pitch-grid-line-in-scale" : ""
+                                        ].filter(Boolean).join(" ")}
                                         style={{ top: `${entry.positionPercent}%` }}
                                       />
                                     ))}
@@ -2545,6 +2857,27 @@ function App() {
             </pre>
           </section>
         </section>
+
+        <datalist id="pitch-range-detents">
+          {PITCH_RANGE_VALUES.map((pitchRange) => (
+            <option key={pitchRange} value={pitchRange} label={formatPitchRangeLabel(pitchRange)} />
+          ))}
+        </datalist>
+
+        <datalist id="pitch-center-note-detents">
+          {Array.from({ length: FIXED_PITCH_CENTER_MAX - FIXED_PITCH_CENTER_MIN + 1 }, (_, index) => {
+            const offset = FIXED_PITCH_CENTER_MIN + index;
+            const showLabel = offset % 12 === 0;
+
+            return (
+              <option
+                key={offset}
+                value={offset}
+                label={showLabel ? formatMidiNoteLabel(FIXED_PITCH_CENTER_REFERENCE_MIDI + offset, "C") : undefined}
+              />
+            );
+          })}
+        </datalist>
       </main>
     </div>
   );
