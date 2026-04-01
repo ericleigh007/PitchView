@@ -1707,6 +1707,67 @@ describe("App desktop regressions", () => {
     });
   });
 
+  test("re-centers adaptive pitch display as playback moves into a new pitch region", async () => {
+    const project = createSingleLayerProject();
+    project.layers[0] = {
+      ...project.layers[0],
+      mediaKind: "audio",
+      mediaSourceUrl: "file://C:/media/tone.wav",
+      sourcePath: "C:/media/tone.wav",
+      availableSources: [
+        { kind: "original", label: "Original", path: "C:/media/tone.wav", url: "file://C:/media/tone.wav" }
+      ],
+      duration: 16,
+      playbackPosition: 2,
+      pitchContour: [
+        ...Array.from({ length: 16 }, () => 220),
+        ...Array.from({ length: 16 }, () => 440)
+      ],
+      pitchConfidence: Array.from({ length: 32 }, () => 0.98),
+      amplitudeEnvelope: Array.from({ length: 32 }, () => 0.3),
+      pitchSpan: 12,
+      pitchCenterMode: "adaptive",
+      analysisState: "ready"
+    };
+    desktopMocks.loadDesktopProject.mockResolvedValue(project);
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      const pitchPath = container.querySelector(".pitch-overlay-line") as SVGPathElement | null;
+      expect(pitchPath?.getAttribute("d")).toBeTruthy();
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu for Player 1" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pitch-center-value-layer-1").textContent).toBe("A3");
+    });
+
+    const audioElement = container.querySelector("audio") as HTMLAudioElement | null;
+    expect(audioElement).toBeTruthy();
+
+    await act(async () => {
+      if (audioElement) {
+        Object.defineProperty(audioElement, "duration", {
+          configurable: true,
+          value: 16
+        });
+        Object.defineProperty(audioElement, "currentTime", {
+          configurable: true,
+          writable: true,
+          value: 14
+        });
+        fireEvent.timeUpdate(audioElement);
+      }
+    });
+
+    await waitFor(() => {
+      expect(getLayerElapsedTimeText("layer-1")).toBe("0:14");
+      expect(screen.getByTestId("pitch-center-value-layer-1").textContent).toBe("A4");
+    });
+  });
+
   test("updates sync offset from the layer menu", async () => {
     desktopMocks.loadDesktopProject.mockResolvedValue(createSingleLayerProject());
 

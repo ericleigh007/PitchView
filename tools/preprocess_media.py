@@ -26,7 +26,13 @@ SUPPORTED_STEM_MODELS = [
 SUPPORTED_PITCH_MODELS = ["yin", "torch-cuda", "other"]
 SUPPORTED_PITCH_SOURCES = ["original", "vocals", "other"]
 SUPPORTED_PROCESSING_DEVICES = ["auto", "gpu", "cpu"]
-ANALYSIS_CACHE_VERSION = 8
+ANALYSIS_CACHE_VERSION = 9
+PITCH_LOW_PASS_CUTOFF_HZ = 1400.0
+HARMONIC_LAG_FACTORS = (2, 3, 4)
+HARMONIC_LAG_ABSOLUTE_TOLERANCE = 0.08
+HARMONIC_LAG_RATIO_TOLERANCE = 1.6
+OCTAVE_GLITCH_TOLERANCE_SEMITONES = 0.75
+SUBHARMONIC_STRENGTH_RATIO = 0.12
 
 
 def torchcrepe_is_available() -> bool:
@@ -459,6 +465,77 @@ def level_amplitudes(amplitudes: list[float], target_level: float = 0.18) -> lis
     return leveled
 
 
+def low_pass_filter_samples(samples: list[float], sample_rate: int, cutoff_hz: float = PITCH_LOW_PASS_CUTOFF_HZ) -> list[float]:
+    if len(samples) < 3 or sample_rate <= 0 or cutoff_hz <= 0:
+        return samples[:]
+
+    dt = 1.0 / sample_rate
+    rc = 1.0 / (2.0 * math.pi * cutoff_hz)
+    alpha = dt / (rc + dt)
+
+    def filter_once(values: list[float]) -> list[float]:
+        filtered = [values[0]]
+        previous = values[0]
+        for value in values[1:]:
+            previous = previous + alpha * (value - previous)
+            filtered.append(previous)
+        return filtered
+
+    forward = filter_once(samples)
+    backward = filter_once(list(reversed(forward)))
+    return list(reversed(backward))
+
+
+def prepare_pitch_detection_samples(samples: list[float], sample_rate: int) -> list[float]:
+    return low_pass_filter_samples(samples, sample_rate)
+
+
+def measure_frequency_presence(frame: list[float], sample_rate: int, frequency_hz: float) -> float:
+    if not frame or sample_rate <= 0 or frequency_hz <= 0 or frequency_hz >= sample_rate / 2:
+        return 0.0
+
+    cosine_total = 0.0
+    sine_total = 0.0
+
+    for index, sample in enumerate(frame):
+        angle = (2.0 * math.pi * frequency_hz * index) / sample_rate
+        cosine_total += sample * math.cos(angle)
+        sine_total += sample * math.sin(angle)
+
+    return math.sqrt(cosine_total * cosine_total + sine_total * sine_total) / len(frame)
+
+
+def choose_fundamental_lag(best_lag: int, normalized_difference: list[float], min_lag: int, max_lag: int, frame: list[float], sample_rate: int) -> tuple[int, float]:
+    selected_lag = best_lag
+    selected_value = normalized_difference[best_lag]
+    selected_pitch = sample_rate / best_lag
+    selected_strength = measure_frequency_presence(frame, sample_rate, selected_pitch)
+
+    for factor in HARMONIC_LAG_FACTORS:
+        harmonic_lag = best_lag * factor
+        if harmonic_lag > max_lag:
+            break
+
+        candidate_start = max(min_lag, harmonic_lag - 1)
+        candidate_end = min(max_lag, harmonic_lag + 1)
+        candidate_lag = min(range(candidate_start, candidate_end + 1), key=lambda lag: normalized_difference[lag])
+        candidate_value = normalized_difference[candidate_lag]
+        candidate_pitch = sample_rate / candidate_lag
+        candidate_strength = measure_frequency_presence(frame, sample_rate, candidate_pitch)
+
+        if (
+            candidate_value <= selected_value + HARMONIC_LAG_ABSOLUTE_TOLERANCE
+            and candidate_value <= selected_value * HARMONIC_LAG_RATIO_TOLERANCE
+            and candidate_strength >= max(0.01, selected_strength * SUBHARMONIC_STRENGTH_RATIO)
+        ):
+            selected_lag = candidate_lag
+            selected_value = candidate_value
+            selected_pitch = candidate_pitch
+            selected_strength = candidate_strength
+
+    return selected_lag, selected_value
+
+
 def deglitch_pitch_contour(contour: list[float], confidence: list[float]) -> list[float]:
     if not contour:
         return []
@@ -481,6 +558,45 @@ def deglitch_pitch_contour(contour: list[float], confidence: list[float]) -> lis
             smoothed[index] = round((previous + next_value) / 2, 6)
 
     return smoothed
+
+
+def suppress_octave_glitches(contour: list[float], confidence: list[float]) -> list[float]:
+    if len(contour) < 3:
+        return contour[:]
+
+    repaired = contour[:]
+
+    for index in range(1, len(repaired) - 1):
+        previous = repaired[index - 1]
+        current = repaired[index]
+        next_value = repaired[index + 1]
+
+        if previous <= 0 or current <= 0 or next_value <= 0:
+            continue
+
+        surrounding_jump = abs(12 * math.log2(next_value / previous))
+        if surrounding_jump > 2.0:
+            continue
+
+        anchor = math.sqrt(previous * next_value)
+        current_confidence = confidence[index] if index < len(confidence) else 0.0
+        previous_confidence = confidence[index - 1] if index - 1 < len(confidence) else 0.0
+        next_confidence = confidence[index + 1] if index + 1 < len(confidence) else 0.0
+
+        if max(previous_confidence, next_confidence) < 0.34:
+            continue
+
+        octave_up_error = abs(12 * math.log2(current / anchor) - 12)
+        octave_down_error = abs(12 * math.log2(current / anchor) + 12)
+
+        if octave_up_error <= OCTAVE_GLITCH_TOLERANCE_SEMITONES and current_confidence < 0.96:
+            repaired[index] = round(current / 2.0, 6)
+            continue
+
+        if octave_down_error <= OCTAVE_GLITCH_TOLERANCE_SEMITONES and current_confidence < 0.96:
+            repaired[index] = round(current * 2.0, 6)
+
+    return repaired
 
 
 def repair_pitch_dropouts(contour: list[float], confidence: list[float]) -> list[float]:
@@ -583,6 +699,8 @@ def estimate_pitch_hz(frame: list[float], sample_rate: int) -> tuple[float, floa
 
     if best_lag == 0:
         return 0.0, 0.0
+
+    best_lag, best_value = choose_fundamental_lag(best_lag, normalized_difference, min_lag, max_lag, frame, sample_rate)
 
     refined_lag = float(best_lag)
     if 1 < best_lag < max_lag:
@@ -812,6 +930,7 @@ def compute_pitch_contour_torch_cuda(
             confidence.append(last_confidence)
 
     repaired = deglitch_pitch_contour(contour, confidence)
+    repaired = suppress_octave_glitches(repaired, confidence)
     repaired = repair_pitch_dropouts(repaired, confidence)
     return repaired, confidence
 
@@ -849,6 +968,7 @@ def compute_pitch_contour(
             break
 
     repaired = deglitch_pitch_contour(contour, confidence)
+    repaired = suppress_octave_glitches(repaired, confidence)
     repaired = repair_pitch_dropouts(repaired, confidence)
     return repaired, confidence
 
@@ -941,10 +1061,11 @@ def analyze_media(
     log_progress("pitch-caching", 56, "Loaded analysis samples")
     leveled_samples = level_sample_series(samples)
     log_progress("pitch-caching", 72, f"Leveled {analysis_source_kind} pitch input")
-    pitch_point_count = choose_pitch_point_count(leveled_samples, sample_rate)
+    pitch_input_samples = prepare_pitch_detection_samples(leveled_samples, sample_rate)
+    pitch_point_count = choose_pitch_point_count(pitch_input_samples, sample_rate)
     amplitude_envelope = compute_amplitude_envelope(leveled_samples, pitch_point_count)
     pitch_contour, confidence = compute_pitch_contour(
-        leveled_samples,
+        pitch_input_samples,
         sample_rate,
         point_count=pitch_point_count,
         pitch_model=effective_pitch_model,
@@ -992,7 +1113,7 @@ def analyze_media(
         "confidence": confidence,
         "note": (
             f"Desktop analysis generated from {analysis_source_kind} audio with FFmpeg-normalized, "
-            f"leveled pitch input, light deglitching, short-dropout repair, and {effective_pitch_model} pitch detection "
+            f"leveled and harmonic-suppressed pitch input, octave-glitch repair, short-dropout repair, and {effective_pitch_model} pitch detection "
             f"on {format_processing_device_label(effective_processing_device)}."
         ),
         "probe": probe,
@@ -1012,7 +1133,7 @@ def repair_pitch_json(input_path: Path, output_path: Path) -> dict[str, object]:
     confidence = [float(value) for value in payload.get("confidence", [1.0] * len(contour))]
     repaired = {
         "amplitudes": level_amplitudes(amplitudes),
-        "pitch_hz": deglitch_pitch_contour(contour, confidence),
+        "pitch_hz": suppress_octave_glitches(deglitch_pitch_contour(contour, confidence), confidence),
         "confidence": confidence,
         "note": "Pitch input leveled for wide amplitude variation and display glitches suppressed."
     }

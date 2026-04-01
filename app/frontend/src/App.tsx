@@ -247,8 +247,27 @@ function buildEnvelopePath(values: number[], width: number, height: number, tota
   return `${topPath} ${bottomPath} Z`;
 }
 
-function getPitchPlotMetrics(layer: PlayerLayer, height: number) {
-  const centerPitch = getLayerCenterPitch(layer);
+function getPitchContourWindow(layer: PlayerLayer, startTime = 0, endTime = layer.duration): number[] {
+  const reliableContour = getReliablePitchContour(layer);
+
+  if (!reliableContour.length) {
+    return [];
+  }
+
+  const totalDuration = Number.isFinite(layer.duration) && layer.duration > 0 ? layer.duration : Math.max(reliableContour.length - 1, 1);
+  const clampedStartTime = Math.max(0, startTime);
+  const clampedEndTime = Math.max(clampedStartTime, Number.isFinite(endTime) && endTime > 0 ? Math.min(endTime, totalDuration) : totalDuration);
+
+  const windowedContour = reliableContour.filter((value, index) => {
+    const timeSeconds = totalDuration > 0 ? (totalDuration * index) / Math.max(reliableContour.length - 1, 1) : index;
+    return timeSeconds >= clampedStartTime && timeSeconds <= clampedEndTime && value > 0;
+  });
+
+  return windowedContour.length ? windowedContour : reliableContour.filter((value) => value > 0);
+}
+
+function getPitchPlotMetrics(layer: PlayerLayer, height: number, startTime = 0, endTime = layer.duration) {
+  const centerPitch = getLayerCenterPitch(layer, startTime, endTime);
   const halfSpan = Math.max(layer.pitchSpan / 2, 1);
   const verticalPadding = Math.max(4, height * 0.04);
   const usableHeight = Math.max(height - verticalPadding * 2, 1);
@@ -261,12 +280,12 @@ function getPitchPlotMetrics(layer: PlayerLayer, height: number) {
   };
 }
 
-function getPitchPlotYForFrequency(layer: PlayerLayer, height: number, frequency: number): number | null {
+function getPitchPlotYForFrequency(layer: PlayerLayer, height: number, frequency: number, startTime = 0, endTime = layer.duration): number | null {
   if (!Number.isFinite(frequency) || frequency <= 0) {
     return null;
   }
 
-  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height);
+  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height, startTime, endTime);
   const semitoneOffset = 12 * Math.log2(frequency / centerPitch);
   const clampedOffset = Math.max(-halfSpan, Math.min(halfSpan, semitoneOffset));
   const normalized = (clampedOffset + halfSpan) / (halfSpan * 2);
@@ -402,7 +421,7 @@ function buildPitchPath(layer: PlayerLayer, width: number, height: number, start
     return "";
   }
 
-  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height);
+  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height, startTime, endTime);
   const totalDuration = Number.isFinite(layer.duration) && layer.duration > 0 ? layer.duration : Math.max(reliableContour.length - 1, 1);
   const clampedStartTime = Math.max(0, startTime);
   const clampedEndTime = Math.max(clampedStartTime, Number.isFinite(endTime) && endTime > 0 ? Math.min(endTime, totalDuration) : totalDuration);
@@ -452,7 +471,7 @@ function buildPitchPoints(layer: PlayerLayer, width: number, height: number, sta
     return [];
   }
 
-  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height);
+  const { centerPitch, halfSpan, verticalPadding, usableHeight } = getPitchPlotMetrics(layer, height, startTime, endTime);
   const totalDuration = Number.isFinite(layer.duration) && layer.duration > 0 ? layer.duration : Math.max(reliableContour.length - 1, 1);
   const clampedStartTime = Math.max(0, startTime);
   const clampedEndTime = Math.max(clampedStartTime, Number.isFinite(endTime) && endTime > 0 ? Math.min(endTime, totalDuration) : totalDuration);
@@ -490,8 +509,8 @@ function frequencyToMidi(frequency: number): number {
   return 69 + 12 * Math.log2(frequency / 440);
 }
 
-function getLayerCenterPitch(layer: PlayerLayer): number {
-  const contour = getReliablePitchContour(layer).filter((value) => value > 0);
+function getLayerCenterPitch(layer: PlayerLayer, startTime = 0, endTime = layer.duration): number {
+  const contour = getPitchContourWindow(layer, startTime, endTime);
 
   if (layer.pitchCenterMode === "adaptive" && contour.length) {
     const averageMidi = contour.reduce((sum, value) => sum + frequencyToMidi(value), 0) / contour.length;
@@ -501,9 +520,9 @@ function getLayerCenterPitch(layer: PlayerLayer): number {
   return midiToFrequency(FIXED_PITCH_CENTER_REFERENCE_MIDI + layer.pitchCenterOffset);
 }
 
-function getDisplayedPitchCenterOffset(layer: PlayerLayer): number {
+function getDisplayedPitchCenterOffset(layer: PlayerLayer, startTime = 0, endTime = layer.duration): number {
   if (layer.pitchCenterMode === "adaptive") {
-    const adaptiveOffset = Math.round(frequencyToMidi(getLayerCenterPitch(layer))) - FIXED_PITCH_CENTER_REFERENCE_MIDI;
+    const adaptiveOffset = Math.round(frequencyToMidi(getLayerCenterPitch(layer, startTime, endTime))) - FIXED_PITCH_CENTER_REFERENCE_MIDI;
     return clamp(adaptiveOffset, FIXED_PITCH_CENTER_MIN, FIXED_PITCH_CENTER_MAX);
   }
 
@@ -578,8 +597,8 @@ function formatPitchRangeLabel(pitchSpan: number): string {
   }
 }
 
-function formatPitchCenterControlLabel(layer: PlayerLayer): string {
-  const displayedOffset = getDisplayedPitchCenterOffset(layer);
+function formatPitchCenterControlLabel(layer: PlayerLayer, startTime = 0, endTime = layer.duration): string {
+  const displayedOffset = getDisplayedPitchCenterOffset(layer, startTime, endTime);
   return formatMidiNoteLabel(FIXED_PITCH_CENTER_REFERENCE_MIDI + displayedOffset, layer.pitchKey);
 }
 
@@ -595,7 +614,7 @@ function isMidiInSelectedScale(midi: number, key: MusicalKey, scaleMode: PitchSc
     : MINOR_SCALE_INTERVALS.has(normalized);
 }
 
-function getPitchScaleLabels(layer: PlayerLayer): Array<{
+function getPitchScaleLabels(layer: PlayerLayer, startTime = 0, endTime = layer.duration): Array<{
   noteLabel: string;
   positionPercent: number;
   frequency: number;
@@ -603,7 +622,7 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
   isCenter: boolean;
   isInScale: boolean;
 }> {
-  const centerPitch = getLayerCenterPitch(layer);
+  const centerPitch = getLayerCenterPitch(layer, startTime, endTime);
   const centerMidi = Math.round(frequencyToMidi(centerPitch));
   const halfSpan = Math.max(Math.round(layer.pitchSpan / 2), 1);
   const gridStep = getPitchGridStep(layer.pitchSpan);
@@ -618,7 +637,7 @@ function getPitchScaleLabels(layer: PlayerLayer): Array<{
     const isPrimary = layer.pitchScaleMode === "chromatic"
       ? isCenter || semitoneOffset % gridStep === 0
       : isCenter || isInScale;
-    const y = getPitchPlotYForFrequency(layer, PITCH_PLOT_HEIGHT, frequency) ?? 0;
+    const y = getPitchPlotYForFrequency(layer, PITCH_PLOT_HEIGHT, frequency, startTime, endTime) ?? 0;
     const positionPercent = (y / PITCH_PLOT_HEIGHT) * 100;
 
     return {
@@ -2181,7 +2200,7 @@ function App() {
                 const amplitudeFillColor = hexToRgba(layer.pitchContourColor, clamp(0.08 + layer.pitchContourIntensity * 0.32, 0.08, 0.92));
                 const amplitudeStrokeColor = hexToRgba(layer.pitchContourColor, clamp(0.42 + layer.pitchContourIntensity * 0.42, 0.42, 1));
                 const contourViewportWidth = viewportWidth;
-                const pitchScaleLabels = getPitchScaleLabels(layer);
+                const pitchScaleLabels = getPitchScaleLabels(layer, timeViewport.startTime, timeViewport.endTime);
                 const selectedStemLabel = getSelectedStemLabel(layer);
                 const effectiveZIndex = openMenuLayerId === layer.id ? topLayerZIndex : layer.zIndex;
                 const activePitchTooltip = hoveredPitchPoint?.layerId === layer.id ? hoveredPitchPoint : null;
@@ -2414,7 +2433,7 @@ function App() {
                           <label>
                             <span className="control-label-row">
                               <span>Pitch center</span>
-                              <span className="control-value" data-testid={`pitch-center-value-${layer.id}`}>{formatPitchCenterControlLabel(layer)}</span>
+                              <span className="control-value" data-testid={`pitch-center-value-${layer.id}`}>{formatPitchCenterControlLabel(layer, timeViewport.startTime, timeViewport.endTime)}</span>
                             </span>
                             <input
                               type="range"
@@ -2424,7 +2443,7 @@ function App() {
                               step="1"
                               list="pitch-center-note-detents"
                               disabled={layer.pitchCenterMode === "adaptive"}
-                              value={getDisplayedPitchCenterOffset(layer)}
+                              value={getDisplayedPitchCenterOffset(layer, timeViewport.startTime, timeViewport.endTime)}
                               onChange={(event) => patchLayer(layer.id, { pitchCenterOffset: Number(event.target.value) })}
                             />
                             <span className="range-help-text">

@@ -99,6 +99,39 @@ class PreprocessMediaTests(unittest.TestCase):
         self.assertGreater(len(detected), 40)
         self.assertGreater(max(detected) - min(detected), 10.0)
 
+    def test_prepare_pitch_detection_samples_preserves_sample_count(self) -> None:
+        sample_rate = 44100
+        samples = [math.sin((2 * math.pi * 220.0 * index) / sample_rate) for index in range(sample_rate // 2)]
+
+        prepared = MODULE.prepare_pitch_detection_samples(samples, sample_rate)
+
+        self.assertEqual(len(prepared), len(samples))
+
+    def test_compute_pitch_contour_prefers_fundamental_over_strong_second_harmonic(self) -> None:
+        sample_rate = 44100
+        duration_seconds = 2
+        sample_count = sample_rate * duration_seconds
+        samples = []
+
+        for index in range(sample_count):
+            time_seconds = index / sample_rate
+            fundamental = 0.12 * math.sin(2 * math.pi * 220.0 * time_seconds)
+            second_harmonic = 0.85 * math.sin(2 * math.pi * 440.0 * time_seconds)
+            third_harmonic = 0.18 * math.sin(2 * math.pi * 660.0 * time_seconds)
+            samples.append(fundamental + second_harmonic + third_harmonic)
+
+        leveled = MODULE.level_sample_series(samples)
+        prepared = MODULE.prepare_pitch_detection_samples(leveled, sample_rate)
+        contour, confidence = MODULE.compute_pitch_contour(prepared, sample_rate, point_count=96)
+        detected = [value for value in contour if value > 0]
+
+        self.assertEqual(len(contour), len(confidence))
+        self.assertEqual(len(contour), 96)
+        self.assertGreater(len(detected), 40)
+        average = sum(detected) / len(detected)
+        self.assertGreater(average, 210)
+        self.assertLess(average, 230)
+
     @unittest.skipUnless(
         MODULE.torchcrepe_is_available() and MODULE.torch_cuda_is_available(),
         "torchcrepe with CUDA is required for torch-based pitch contour testing",
@@ -148,6 +181,15 @@ class PreprocessMediaTests(unittest.TestCase):
         confidence = [0.95, 0.95, 0.2, 0.95, 0.95]
 
         repaired = MODULE.repair_pitch_dropouts(contour, confidence)
+
+        self.assertGreater(repaired[2], 220.0)
+        self.assertLess(repaired[2], 223.0)
+
+    def test_suppress_octave_glitches_repairs_isolated_harmonic_jump(self) -> None:
+        contour = [220.0, 221.0, 442.0, 222.0, 223.0]
+        confidence = [0.95, 0.95, 0.45, 0.95, 0.95]
+
+        repaired = MODULE.suppress_octave_glitches(contour, confidence)
 
         self.assertGreater(repaired[2], 220.0)
         self.assertLess(repaired[2], 223.0)
